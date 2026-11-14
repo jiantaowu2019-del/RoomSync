@@ -1,0 +1,72 @@
+:root {
+  font: 16px/1.5 "Inter", "Segoe UI", sans-serif;
+  color: #1d322b;
+  background: #f5f5ee;
+  font-synthesis: none;
+  --ink: #1d322b;
+  --muted: #52645a;
+  --line: #dce2d8;
+  --forest: #214d3c;
+  --paper: #fffefa;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+h1, h2, h3, p { margin: 0; }
+p, small, .muted, time { color: var(--muted); }
+h1 { font-size: clamp(2rem, 5vw, 3.4rem); line-height: 1.12; letter-spacing: -.05em; }
+h2 { font-size: 1.2rem; letter-spacing: -.025em; }
+h3 { font-size: 1rem; }
+.masthead { background: #17392e; color: #f9faf4; }
+.masthead div { max-width: 1152px; margin: auto; padding: 16px 24px; display: flex; align-items: center; gap: 10px; font-size: 1.18rem; font-weight: 700; }
+.mark { display: grid; place-items: center; border-radius: 10px; width: 32px; height: 32px; background: #e0edcc; color: #17392e; }
+main { max-width: 1152px; margin: auto; padding: 38px 24px 56px; }
+.page-heading { display: flex; justify-content: space-between; align-items: end; margin-bottom: 26px; gap: 16px; }
+.page-heading p { margin-top: 3px; }
+.workspace { display: grid; grid-template-columns: minmax(245px, 330px) minmax(0, 1fr); gap: 24px; align-items: start; }
+aside { display: grid; gap: 16px; }
+.panel { background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 22px; }
+.login { margin: 32px auto; max-width: 440px; }
+.login h1 { font-size: 2rem; }
+form, label { display: grid; gap: 8px; }
+form { gap: 14px; margin-top: 15px; }
+label { font-size: .9rem; font-weight: 600; }
+button, input, textarea { font: inherit; }
+input, textarea { border: 1px solid #bdc9be; border-radius: 8px; background: white; color: var(--ink); padding: 9px 11px; min-width: 0; }
+textarea { resize: vertical; min-height: 72px; }
+button, .secondary { display: inline-block; background: var(--forest); color: white; padding: 8px 13px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; font-weight: 600; text-decoration: none; text-align: center; }
+button:disabled { opacity: .65; cursor: wait; }
+button:hover:not(:disabled) { filter: brightness(.93); }
+:focus-visible { outline: 3px solid #407e65; outline-offset: 3px; }
+.secondary, .quiet { background: transparent; color: var(--forest); border-color: #bdc9be; }
+.quiet { font-size: .85rem; padding: 5px 9px; }
+.account, .actions, .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.row { justify-content: space-between; }
+.title h2 { font-size: 1.55rem; overflow-wrap: anywhere; }
+.subtitle, .detail > p, .share > p, .payment p { margin-top: 5px; }
+.expense-list p { margin-top: 8px; }
+.expense-item { width: 100%; margin-top: 8px; background: transparent; border-color: var(--line); color: var(--ink); display: flex; justify-content: space-between; align-items: start; gap: 8px; text-align: left; }
+.expense-item[aria-current="true"] { background: #edf2e7; border-color: #a5bca4; }
+.expense-item > span:first-child { overflow-wrap: anywhere; }
+.expense-item > span:last-child { text-align: right; }
+.expense-item small, .expense-item .badge { display: block; }
+.badge { display: inline-block; background: #e9ede6; color: #35473e; border-radius: 100px; padding: 2px 8px; font-size: .75rem; font-weight: 650; white-space: nowrap; }
+.badge.settled, .badge.confirmed { background: #deeedc; color: #27543a; }
+.badge.payment_reported, .badge.reported { background: #fbedd2; color: #634b19; }
+.badge.rejected { background: #f4e0db; color: #792e24; }
+.balance { margin: 17px 0; padding: 16px 18px; border-radius: 12px; background: #eaf0e4; display: grid; gap: 1px; }
+.balance strong { font-size: clamp(1.5rem, 5vw, 2.4rem); letter-spacing: -.04em; }
+.actions, .payment { margin-top: 12px; }
+.payment { border: 1px solid var(--line); padding: 12px; border-radius: 10px; overflow-wrap: anywhere; }
+.activity { border-top: 1px solid var(--line); margin-top: 19px; padding-top: 13px; }
+.activity ol { margin: 7px 0 0; padding-left: 21px; }
+.activity li { padding: 3px 0; }
+time { font-size: .8rem; margin-left: 6px; }
+.error { color: #762e25; background: #f8e8e4; border: 1px solid #e8c4bc; border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; }
+@media (max-width: 690px) {
+  main { padding: 24px 15px 40px; }
+  .workspace { grid-template-columns: 1fr; gap: 16px; }
+  .page-heading { align-items: start; }
+  .account { justify-content: end; }
+  .masthead div { padding-inline: 15px; }
+  .panel { padding: 16px; }
+}
