@@ -68,12 +68,14 @@ its new logins are blocked pending an authorized credential correction.
 ## Manual acceptance for Slice 2
 
 1. As Alex, use **Create group**, then invite `sam`, `casey`, and `jordan`.
-   Accept in the other three profiles. Use **Refresh** in Alex's profile to
-   load the active roster.
+   Accept in the other three profiles. In Alex's profile, the active roster
+   updates when returning to the page or within one 12-second refresh cycle
+   while it is visible.
 2. Enter a $120.00 expense. Check **Select all group members** and verify a
    $30.00 preview for each member. Post and check the $90.00 outstanding total.
-3. As Sam, report $30.00 paid. The total stays at $90.00. Refresh as Alex and
-   confirm Sam's receipt. Verify Sam is Settled, Casey and Jordan each still
+3. As Sam, report $30.00 paid. The total stays at $90.00. On Alex's open expense,
+   wait for the report to appear or return to the page, then confirm Sam's
+   receipt. Verify Sam is Settled, Casey and Jordan each still
    owe $30.00, and the expense is Open with $60.00 outstanding.
 4. Report and confirm Casey's and Jordan's shares. The final outstanding
    total is $0.00 and the expense is Settled.
@@ -84,6 +86,16 @@ its new logins are blocked pending an authorized credential correction.
 6. Open **Historical expenses** as Alex or Sam to view earlier two-person
    records and handle any pending reports. Casey and Jordan cannot read those
    records.
+7. As Sam, post $101.01 with all four members and **Payer covers remainder**.
+   Verify Sam is listed under **Paid by**, **Total paid** is $101.01, the
+   **Amount per person** is $25.26 for Sam and $25.25 for each other
+   participant, and **Total outstanding** is $75.75. On another expense,
+   select only Casey alongside Sam. Alex can still view the saved expense.
+8. With a draft open, let another member report a payment. The draft's
+   description, amount, participant choices, and remainder policy should
+   survive the automatic update. On a 390 × 844 mobile viewport, use
+   **New expense** and **View expenses** next to the group name and check
+   that each shortcut scrolls to and focuses its section heading.
 
 The mock payment link is optional for manual acceptance. Opening it or
 returning leaves the balance unchanged. The automated browser test intercepts

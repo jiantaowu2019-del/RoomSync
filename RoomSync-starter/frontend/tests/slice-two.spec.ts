@@ -2,8 +2,12 @@ import { expect, test, type Browser, type Page } from "@playwright/test";
 
 test.setTimeout(60_000);
 
-async function signIn(browser: Browser, username: string) {
+async function signIn(browser: Browser, username: string, freezeTime = false) {
   const page = await browser.newPage();
+  if (freezeTime) {
+    await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+    await page.clock.pauseAt(new Date("2026-01-01T00:00:10Z"));
+  }
   await page.goto("/");
   await page.getByLabel("Username").fill(username);
   await page.getByLabel("Password").fill(`demo-${username}-test-123`);
@@ -105,7 +109,7 @@ test("preview matches saved allocations and observers see rejection activity", a
     await alex.getByRole("button", { name: "Refresh", exact: true }).click();
     await expect(alex.getByRole("checkbox", { name: "Jordan" })).toBeVisible();
     const preview = alex.getByRole("region", { name: "Allocation preview" });
-    const saved = alex.getByRole("region", { name: "Saved allocations" });
+    const saved = alex.getByRole("region", { name: "Amount per person" });
 
     await fillExpense(alex, "Even remainder", "120.03");
     await alex.getByRole("button", { name: "Select all group members" }).click();
@@ -194,5 +198,146 @@ test("retrying a committed group expense after a reload reuses its request key",
     expect(keys[2]).not.toBe(keys[0]);
   } finally {
     await Promise.all([alex, sam].map(page => page.context().close()));
+  }
+});
+
+test("Sam can fund either a four-member or a two-member expense", async ({ browser }) => {
+  const [alex, sam, casey, jordan] = await Promise.all(
+    ["alex", "sam", "casey", "jordan"].map(name => signIn(browser, name)),
+  );
+  try {
+    const group = "Sam's expense group";
+    await setupGroup(alex, group, ["sam", "casey", "jordan"]);
+    await Promise.all([sam, casey, jordan].map(page => accept(page, group)));
+    await sam.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(sam.getByRole("checkbox", { name: "Jordan", exact: true })).toBeVisible();
+    const payer = sam.getByRole("checkbox", { name: "Sam (payer)", exact: true });
+    const alexOption = sam.getByRole("checkbox", { name: "Alex", exact: true });
+    await expect(payer).toBeChecked();
+    await expect(payer).toBeDisabled();
+    await expect(alexOption).toBeEnabled();
+    await expect(alexOption).not.toBeChecked();
+    await expect(sam.getByText("At least 2 people, including the payer.", { exact: false })).toBeVisible();
+
+    const preview = sam.getByRole("region", { name: "Allocation preview" });
+    const allAmounts = ["Sam$25.26", "Alex$25.25", "Casey$25.25", "Jordan$25.25"];
+    await fillExpense(sam, "Sam paid for four", "101.01");
+    await sam.getByRole("button", { name: "Select all group members" }).click();
+    await expect(sam.getByRole("radio", { name: "Payer covers remainder" })).toBeChecked();
+    await expect(preview.locator("li")).toHaveText(allAmounts);
+    await sam.getByRole("button", { name: "Add expense", exact: true }).click();
+
+    await openExpense(alex, "Sam paid for four");
+    await expect(alex.locator(".expense-summary > div")).toHaveText(["Paid bySam", "Total paid$101.01"]);
+    await expect(alex.getByRole("region", { name: "Amount per person" }).locator("li")).toHaveText(allAmounts);
+    await expect(alex.locator(".balance")).toHaveText("Total outstanding$75.75");
+    for (const name of ["Alex", "Casey", "Jordan"]) {
+      await expect(share(alex, name)).toContainText("Remaining: $25.25");
+    }
+    await expect(share(alex, "Sam")).toHaveCount(0);
+
+    await fillExpense(sam, "Sam paid with Casey", "101.01");
+    await sam.getByRole("checkbox", { name: "Casey", exact: true }).check();
+    await expect(alexOption).not.toBeChecked();
+    await expect(sam.getByRole("button", { name: "Add expense", exact: true })).toBeEnabled();
+    const twoAmounts = ["Sam$50.51", "Casey$50.50"];
+    await expect(preview.locator("li")).toHaveText(twoAmounts);
+    await sam.getByRole("button", { name: "Add expense", exact: true }).click();
+    await expect(sam.getByRole("heading", { name: "Sam paid with Casey", exact: true })).toBeVisible();
+
+    for (const observer of [alex, jordan]) {
+      await openExpense(observer, "Sam paid with Casey");
+      await expect(observer.getByRole("region", { name: "Amount per person" }).locator("li")).toHaveText(twoAmounts);
+      await expect(observer.getByText("You have no allocation for this expense.")).toBeVisible();
+      await expect(observer.getByRole("button", { name: /Report .* paid|Confirm .* received|Reject report/ })).toHaveCount(0);
+    }
+  } finally {
+    await Promise.all([alex, sam, casey, jordan].map(page => page.context().close()));
+  }
+});
+
+test("foreground polls and returning to the page update other accounts without losing a draft", async ({ browser }) => {
+  const [alex, sam] = await Promise.all(["alex", "sam"].map(name => signIn(browser, name, true)));
+  try {
+    const group = "Cross-account updates";
+    const original = "Selected expense";
+    await setupGroup(alex, group, ["sam"]);
+    await sam.clock.runFor(12_000);
+    await sam.getByRole("button", { name: "Accept invitation to " + group }).click();
+    await expect(sam.getByRole("heading", { name: "New expense", exact: true })).toBeVisible();
+    await alex.clock.runFor(12_000);
+    await expect(alex.getByRole("checkbox", { name: "Sam", exact: true })).toBeVisible();
+
+    for (const description of [original, "Newer expense"]) {
+      await fillExpense(alex, description, "60.00");
+      await alex.getByRole("checkbox", { name: "Sam", exact: true }).check();
+      await alex.getByRole("button", { name: "Add expense", exact: true }).click();
+      await expect(alex.getByRole("heading", { name: description, exact: true })).toBeVisible();
+    }
+    await alex.getByRole("button", { name: /^Selected expense/ }).click();
+    await expect(alex.getByRole("heading", { name: original, exact: true })).toBeVisible();
+
+    await fillExpense(alex, "Unsubmitted draft", "23.01");
+    await alex.getByRole("checkbox", { name: "Sam", exact: true }).check();
+    const even = alex.getByRole("radio", { name: "Distribute as evenly as possible" });
+    await even.check();
+
+    await sam.clock.runFor(12_000);
+    await sam.getByRole("button", { name: /^Selected expense/ }).click();
+    await share(sam, "Sam").getByRole("button", { name: "Report $30.00 paid" }).click();
+    await expect(share(sam, "Sam")).toContainText("Waiting for Alex to confirm receipt.");
+
+    await alex.clock.runFor(12_000);
+    const confirm = share(alex, "Sam").getByRole("button", { name: "Confirm $30.00 received" });
+    await expect(confirm).toBeVisible();
+    await expect(alex.getByRole("button", { name: /^Selected expense/ })).toHaveAttribute("aria-current", "true");
+    await expect(alex.getByLabel("Description")).toHaveValue("Unsubmitted draft");
+    await expect(alex.getByLabel("Total (USD)")).toHaveValue("23.01");
+    await expect(alex.getByRole("checkbox", { name: "Alex (payer)", exact: true })).toBeChecked();
+    await expect(alex.getByRole("checkbox", { name: "Sam", exact: true })).toBeChecked();
+    await expect(even).toBeChecked();
+
+    await sam.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await confirm.click();
+    await expect(alex.locator(".detail .title")).toContainText("Settled");
+    await sam.clock.runFor(12_000);
+    await expect(sam.locator(".detail .title")).toContainText("Open");
+    await sam.evaluate(() => {
+      Reflect.deleteProperty(document, "visibilityState");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await expect(sam.locator(".detail .title")).toContainText("Settled");
+    await expect(sam.getByRole("button", { name: /^Selected expense/ })).toHaveAttribute("aria-current", "true");
+  } finally {
+    await Promise.all([alex, sam].map(page => page.context().close()));
+  }
+});
+
+test("group shortcuts scroll and focus the correct mobile sections", async ({ browser }) => {
+  const alex = await signIn(browser, "alex");
+  try {
+    await alex.setViewportSize({ width: 390, height: 844 });
+    await setupGroup(alex, "Mobile shortcuts", []);
+    const nav = alex.getByRole("navigation", { name: "Group shortcuts" });
+    const create = nav.getByRole("button", { name: "New expense", exact: true });
+    const view = nav.getByRole("button", { name: "View expenses", exact: true });
+    await expect(create).toBeInViewport();
+    await expect(view).toBeInViewport();
+
+    await create.click();
+    const formHeading = alex.getByRole("heading", { name: "New expense", exact: true });
+    await expect(formHeading).toBeFocused();
+    await expect(formHeading).toBeInViewport();
+    expect(await alex.evaluate(() => scrollY)).toBeGreaterThan(0);
+
+    await view.click();
+    const listHeading = alex.getByRole("heading", { name: "Group expenses", exact: true });
+    await expect(listHeading).toBeFocused();
+    await expect(listHeading).toBeInViewport();
+  } finally {
+    await alex.context().close();
   }
 });

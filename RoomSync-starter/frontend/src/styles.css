@@ -22,6 +22,7 @@ h3 { font-size: 1rem; }
 main { max-width: 1152px; margin: auto; padding: 38px 24px 56px; }
 .page-heading { display: flex; justify-content: space-between; align-items: end; margin-bottom: 26px; gap: 16px; }
 .page-heading p { margin-top: 3px; }
+.group-heading, .group-heading nav { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .workspace { display: grid; grid-template-columns: minmax(245px, 330px) minmax(0, 1fr); gap: 24px; align-items: start; }
 aside { display: grid; gap: 16px; }
 .panel { background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 22px; }
@@ -51,7 +52,10 @@ legend { font-weight: 600; }
 .choice { display: flex; align-items: center; margin-block: 6px; }
 .allocations { list-style: none; margin: 4px 0 0; padding: 0; }
 .allocations li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; }
-[aria-label="Saved allocations"] { margin-top: 12px; }
+.expense-summary { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 12px 0; }
+.expense-summary dt { color: var(--muted); font-size: .9rem; }
+.expense-summary dd { margin: 0; font-weight: 700; }
+#new-expense-heading, #expense-list-heading { scroll-margin-top: 16px; }
 .expense-item { width: 100%; margin-top: 8px; background: transparent; border-color: var(--line); color: var(--ink); display: flex; justify-content: space-between; align-items: start; gap: 8px; text-align: left; }
 .expense-item[aria-current="true"] { background: #edf2e7; border-color: #a5bca4; }
 .expense-item > span:first-child { overflow-wrap: anywhere; }

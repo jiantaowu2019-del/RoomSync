@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import { api, ApiError, money, submit, type Expense, type ExpenseRow, type Group, type GroupDetail, type Payment, type Session, type Share } from "./api";
 import { ExpenseForm, type ExpenseDraft } from "./ExpenseForm";
 import "./styles.css";
+
+const REFRESH_INTERVAL_MS = 12_000;
 
 const activity: Record<string, string> = {
   EXPENSE_CREATED: "created the expense",
@@ -21,6 +23,12 @@ function badge(status: string) {
     REPORTED: "Payment reported", CONFIRMED: "Receipt confirmed", REJECTED: "Rejected", SETTLED: "Settled",
   };
   return <span className={"badge " + status.toLowerCase()}>{labels[status]}</span>;
+}
+
+function focusSection(id: string) {
+  const heading = document.getElementById(id);
+  heading?.scrollIntoView({ block: "start" });
+  heading?.focus({ preventScroll: true });
 }
 
 function Login({ onLogin }: { onLogin: (session: Session) => void }) {
@@ -60,32 +68,67 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(true);
   const pending = useRef(new Map<string, string>());
+  const backgroundRead = useRef<AbortController | null>(null);
+  const groupId = group?.id ?? null;
+  const selectedId = selected?.id;
 
-  async function openLedger(groupId: number | null, id?: number) {
+  const openLedger = useCallback(async (groupId: number | null, id?: number, signal?: AbortSignal) => {
     const [detail, expenses] = await Promise.all([
-      groupId === null ? Promise.resolve(null) : api<GroupDetail>(`/groups/${groupId}`),
-      api<ExpenseRow[]>(groupId === null ? "/expenses" : `/groups/${groupId}/expenses`),
+      groupId === null ? Promise.resolve(null) : api<GroupDetail>(`/groups/${groupId}`, { signal }),
+      api<ExpenseRow[]>(groupId === null ? "/expenses" : `/groups/${groupId}/expenses`, { signal }),
     ]);
     const nextId = id ?? expenses[0]?.id;
-    const expense = nextId === undefined ? null : await api<Expense>("/expenses/" + nextId);
+    const expense = nextId === undefined ? null : await api<Expense>("/expenses/" + nextId, { signal });
+    if (signal?.aborted) return;
     setGroup(detail);
     setRows(expenses);
     setSelected(expense);
-  }
+  }, []);
 
-  async function refreshGroups() {
-    setGroups(await api<Group[]>("/groups"));
-  }
+  const refreshGroups = useCallback(async (signal?: AbortSignal) => {
+    const entries = await api<Group[]>("/groups", { signal });
+    if (!signal?.aborted) setGroups(entries);
+  }, []);
 
   async function refresh() {
-    await Promise.all([refreshGroups(), openLedger(group?.id ?? null, selected?.id)]);
+    await Promise.all([refreshGroups(), openLedger(groupId, selectedId)]);
   }
 
   useEffect(() => {
     void run(refresh);
   }, []);
 
+  useEffect(() => {
+    if (busy) return;
+
+    async function refreshVisibleLedger() {
+      if (document.visibilityState !== "visible" || backgroundRead.current) return;
+      const request = new AbortController();
+      backgroundRead.current = request;
+      try {
+        await Promise.all([refreshGroups(request.signal), openLedger(groupId, selectedId, request.signal)]);
+      } catch {
+        // Preserve the visible ledger and let the next foreground refresh retry.
+        request.abort();
+      } finally {
+        if (backgroundRead.current === request) backgroundRead.current = null;
+      }
+    }
+
+    const timer = window.setInterval(refreshVisibleLedger, REFRESH_INTERVAL_MS);
+    window.addEventListener("focus", refreshVisibleLedger);
+    document.addEventListener("visibilitychange", refreshVisibleLedger);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshVisibleLedger);
+      document.removeEventListener("visibilitychange", refreshVisibleLedger);
+      backgroundRead.current?.abort();
+      backgroundRead.current = null;
+    };
+  }, [busy, groupId, selectedId, openLedger, refreshGroups]);
+
   async function run(action: () => Promise<void>) {
+    backgroundRead.current?.abort();
     setBusy(true);
     setError("");
     setNotice("");
@@ -170,14 +213,23 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
   async function updatePayment(path: string, fields: object) {
     await run(async () => {
       await write(path, fields);
-      await openLedger(group?.id ?? null, selected?.id);
+      await openLedger(groupId, selectedId);
       pending.current.delete(path + "\n" + JSON.stringify(fields));
     });
   }
 
   return <>
     <div className="page-heading">
-      <div><h1>Shared expenses</h1><p>{group?.name ?? "Historical expenses"}</p></div>
+      <div>
+        <h1>Shared expenses</h1>
+        <div className="group-heading">
+          <p>{group?.name ?? "Historical expenses"}</p>
+          {group && <nav aria-label="Group shortcuts">
+            <button type="button" className="quiet" onClick={() => focusSection("new-expense-heading")}>New expense</button>
+            <button type="button" className="quiet" onClick={() => focusSection("expense-list-heading")}>View expenses</button>
+          </nav>}
+        </div>
+      </div>
       <div className="account">
         <span>{session.viewer.display_name}</span>
         <button className="quiet" disabled={busy} onClick={() => void run(async () => {
@@ -218,11 +270,11 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
         </section>}
         {group && <ExpenseForm key={group.id} members={group.members} payer={session.viewer} busy={busy} save={addExpense} />}
         <section className="panel expense-list">
-          <h2>{group ? "Group expenses" : "Historical expenses"}</h2>
+          <h2 id="expense-list-heading" tabIndex={-1}>{group ? "Group expenses" : "Historical expenses"}</h2>
           {rows.length === 0 && <p>{busy ? "Loading expenses…" : "No expenses yet."}</p>}
           {rows.map(row => <button type="button" key={row.id} className="expense-item"
             aria-current={selected?.id === row.id ? "true" : undefined} disabled={busy}
-            onClick={() => void run(() => openLedger(group?.id ?? null, row.id))}>
+            onClick={() => void run(() => openLedger(groupId, row.id))}>
             <span>{row.description}<small>Paid by {row.original_payer}</small></span>
             <span>{money(row.total_minor)}{badge(row.status)}</span>
           </button>)}
@@ -231,15 +283,18 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
       <div>
         {selected ? <section className="panel detail">
           <div className="row title"><h2>{selected.description}</h2>{badge(selected.status)}</div>
-          <p>{selected.original_payer} paid {money(selected.total_minor)}.</p>
-          <section aria-label="Saved allocations">
-            <h3>Allocations</h3>
+          <dl className="expense-summary">
+            <div><dt>Paid by</dt><dd>{selected.original_payer}</dd></div>
+            <div><dt>Total paid</dt><dd>{money(selected.total_minor)}</dd></div>
+          </dl>
+          <section aria-labelledby="expense-allocations-heading">
+            <h3 id="expense-allocations-heading">Amount per person</h3>
             <ul className="allocations">{selected.allocations.map(allocation => <li key={allocation.member_id}>
               <span>{allocation.display_name}</span><strong>{money(allocation.amount_minor)}</strong>
             </li>)}</ul>
           </section>
           <div className="balance">
-            <span>Outstanding balance</span>
+            <span>Total outstanding</span>
             <strong>{money(selected.outstanding_minor)}</strong>
           </div>
           {selected.shares.length === 0 && <p>No payments are due for this expense.</p>}

@@ -44,7 +44,7 @@ export function ExpenseForm({ members, payer, busy, save }: {
   }
 
   return <section className="panel">
-    <h2>New expense</h2>
+    <h2 id="new-expense-heading" tabIndex={-1}>New expense</h2>
     <form onSubmit={submitExpense}>
       <label>Description<input name="description" placeholder="Groceries" required maxLength={160} /></label>
       <label>Total (USD)<input name="total" inputMode="decimal" placeholder="0.00" required maxLength={20}
@@ -62,7 +62,7 @@ export function ExpenseForm({ members, payer, busy, save }: {
             }} />
           {member.display_name}{member.id === payer.id ? " (payer)" : ""}
         </label>)}
-        <p aria-live="polite">{count} selected · at least 2 required</p>
+        <p aria-live="polite">{count} selected · At least 2 people, including the payer.</p>
       </fieldset>
       {remainder > 0 && <fieldset disabled={busy}>
         <legend>Remainder</legend>
