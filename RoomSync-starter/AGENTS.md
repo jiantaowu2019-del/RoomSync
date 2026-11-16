@@ -31,3 +31,11 @@
 
 ## Review priorities
 Prioritize money calculation errors, privilege escalation, false confirmation, data loss, duplicate updates, broken auditability, misleading settlement UI and unsafe external redirects over styling.
+
+## Communication and Language
+
+- All source code, identifiers, comments, API definitions, technical documentation, tests, and Git commit messages must be written in English.
+- Communicate with the product owner in Simplified Chinese by default, while preserving standard English technical terminology.
+- Do not translate established domain terms such as Expense, Payable Share, Settlement, Dispute, or Audit Log into code identifiers.
+- When explaining technical decisions, use clear Chinese and include English terminology where it improves understanding.
+- Prioritize correctness, explicit requirements, and consistency over the language used in conversational prompts.

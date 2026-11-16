@@ -9,6 +9,9 @@ from starlette.requests import Request
 COOKIE = "roomsync_session"
 SESSION_LIFETIME = timedelta(hours=8)
 PASSWORD_ITERATIONS = 600_000
+EXAMPLE_PASSWORDS = frozenset(
+    f"replace-with-local-{username}-password" for username in ("alex", "sam")
+)
 
 
 def password_hash(password: str, salt: bytes | None = None) -> str:
@@ -17,12 +20,16 @@ def password_hash(password: str, salt: bytes | None = None) -> str:
     return f"{salt.hex()}:{digest.hex()}"
 
 
+def password_matches(password: str, stored_hash: str) -> bool:
+    salt = bytes.fromhex(stored_hash.split(":")[0])
+    return hmac.compare_digest(stored_hash, password_hash(password, salt))
+
+
 def authenticate(cur, username: str, password: str):
     cur.execute("SELECT id, password_hash FROM members WHERE username = %s AND demo_member", (username,))
     member = cur.fetchone()
     stored_hash = member["password_hash"] if member else ("00" * 16 + ":" + "00" * 32)
-    salt = bytes.fromhex(stored_hash.split(":")[0])
-    if not hmac.compare_digest(stored_hash, password_hash(password, salt)) or not member:
+    if not password_matches(password, stored_hash) or not member or password in EXAMPLE_PASSWORDS:
         raise HTTPException(401, "Invalid username or password.")
     return member["id"]
 

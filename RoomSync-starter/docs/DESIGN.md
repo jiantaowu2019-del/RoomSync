@@ -41,7 +41,10 @@ The React and TypeScript page uses the same origin as the FastAPI JSON API.
 PostgreSQL stores financial records, idempotency responses, and server-side
 sessions. Passwords for demo users come from local configuration. Sessions use
 opaque tokens in HttpOnly cookies. Mutating requests require the configured
-Origin. HTTPS deployments use Secure cookies.
+canonical browser Origin. HTTPS deployments use Secure cookies. Setup requires
+distinct demo passwords and rejects the example values. It detects existing
+account mismatches without overwriting passwords. Login also rejects the
+example values for any legacy seeded account.
 
 | Route | Access and operation |
 | --- | --- |
@@ -66,18 +69,31 @@ original status and body; reusing a key for a different operation returns 409.
 Authorization is checked before replay. A share row lock serializes reports and
 decisions, and a database unique constraint allows only one decision per report.
 Financial facts, audit events, and the idempotency result commit together.
+The expense form stores the unresolved request key in tab session storage,
+scoped to the actor and a digest of the submitted body. Re-entering the same
+values after a reload can safely recover a lost response. The key is cleared
+after the page reflects a successful result, so identical later expenses can
+be submitted as separate operations.
 
 ## Level 2 payment link
 
 Each recipient has an optional configured external link. The application returns
-it only to the debtor for a share with a remaining balance. The browser navigates
-directly to the configured URL. Local development and automated tests use the
-built-in mock host policy. Configuration supports an exact HTTPS host and a
-literal path prefix followed by a single handle. The approved policy must be
-confirmed by the owner before configuring any live provider. The supported URL
+it only to the debtor for an unpaid share without a pending report. Rejection
+restores the link. The browser navigates directly to the configured URL.
+The runtime allowlist currently accepts only the reserved mock host
+`pay.example.test` and `/u/<handle>` over HTTPS. A live provider and its exact URL
+rules require owner approval and an explicit allowlist entry. The supported URL
 shape has no credentials, port, query, or fragment. RoomSync performs no network
 request to the provider, stores no payment credentials, and has no payment
 callback. A recipient manually attests to the amount received outside RoomSync.
+
+## Local database and browser tests
+
+Compose and the application share `ROOMSYNC_DB_PORT` and `ROOMSYNC_DB_PASSWORD`.
+A complete `ROOMSYNC_DATABASE_URL` remains available for explicit overrides.
+Tests require a separate database with a `_test` suffix. The browser test runner
+owns the lifecycle of its random schema and supplies the server with the
+isolated connection. Playwright passes its configured loopback port to the server.
 
 ## Deferred
 

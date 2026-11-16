@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "playwright test"
+    "test:e2e": "cd .. && python -m tests.run_browser_tests"
   },
   "dependencies": {
     "react": "19.2.7",

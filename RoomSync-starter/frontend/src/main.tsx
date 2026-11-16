@@ -104,10 +104,21 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
       return;
     }
     void run(async () => {
-      const body = { description: String(fields.get("description")).trim(), total_minor: total };
-      const result = await write<{ id: number }>("/expenses", body);
+      const body = JSON.stringify({ description: String(fields.get("description")).trim(), total_minor: total });
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
+      const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+      const storageKey = `roomsync:expense:${session.viewer.id}:${fingerprint}`;
+      const key = sessionStorage.getItem(storageKey) ?? crypto.randomUUID();
+      sessionStorage.setItem(storageKey, key);
+      let result: { id: number };
+      try {
+        result = await submit<{ id: number }>("/expenses", body, key);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 422) sessionStorage.removeItem(storageKey);
+        throw error;
+      }
       await refresh(result.id);
-      pending.current.delete("/expenses\n" + JSON.stringify(body));
+      sessionStorage.removeItem(storageKey);
       form.reset();
     });
   }
@@ -182,16 +193,16 @@ type Mutate = (path: string, body: object) => Promise<void>;
 function ShareView({ share, payer, busy, update }: { share: Share; payer: boolean; busy: boolean; update: Mutate }) {
   return <div className="share">
     <div className="row"><h3>{share.debtor} owes {share.recipient}</h3>{badge(share.status)}</div>
-    {payer && share.outstanding_minor > 0 && <>
+    {payer && share.status === "UNPAID" && <>
       <p>Make payment outside RoomSync. The balance changes after {share.recipient} confirms receipt.</p>
       <div className="actions">
         {share.payment_url
           ? <a className="secondary" href={share.payment_url} target="_blank" rel="noopener noreferrer">Open external payment link</a>
           : <span className="muted">No payment link is configured.</span>}
-        {share.status === "UNPAID" && <button disabled={busy}
+        <button disabled={busy}
           onClick={() => void update(`/shares/${share.id}/payments`, { amount_minor: share.outstanding_minor })}>
           Report {money(share.outstanding_minor)} paid
-        </button>}
+        </button>
       </div>
     </>}
     {share.payments.map(payment => <div className="payment" key={payment.id}>

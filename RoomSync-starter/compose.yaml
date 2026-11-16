@@ -4,9 +4,9 @@ services:
     environment:
       POSTGRES_DB: roomsync
       POSTGRES_USER: roomsync
-      POSTGRES_PASSWORD: roomsync-local
+      POSTGRES_PASSWORD: "${ROOMSYNC_DB_PASSWORD:-roomsync-local}"
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${ROOMSYNC_DB_PORT:-5432}:5432"
     volumes:
       - roomsync-data:/var/lib/postgresql
 

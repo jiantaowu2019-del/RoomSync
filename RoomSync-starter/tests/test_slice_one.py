@@ -1,4 +1,5 @@
 import os
+from subprocess import CompletedProcess
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from uuid import uuid4
@@ -6,12 +7,15 @@ from uuid import uuid4
 import psycopg2
 import pytest
 from fastapi.testclient import TestClient
+from psycopg2.extensions import parse_dsn
 
 from roomsync import ledger
 from roomsync.auth import COOKIE, session_token_hash
 from roomsync.db import connect, migrate
 from roomsync.http import create_app
-from tests.support import MOCK_URL, PASSWORDS, isolated_settings
+from roomsync.setup import seed_member
+from tests import run_browser_tests
+from tests.support import BROWSER_DSN, MOCK_URL, PASSWORDS, isolated_settings
 
 ORIGIN = "http://127.0.0.1"
 AMOUNT = {"amount_minor": 3000}
@@ -76,6 +80,39 @@ def test_migration_is_repeatable(settings):
         assert cur.fetchone()["count"] == 1
 
 
+def test_setup_rejects_changed_password_without_overwriting_existing_account(settings, app):
+    with connect(settings.database_url) as db, db.cursor() as cur:
+        seed_member(cur, "alex", "Alex", PASSWORDS["alex"])
+    with pytest.raises(SystemExit, match="Existing account 'alex'"):
+        with connect(settings.database_url) as db, db.cursor() as cur:
+            seed_member(cur, "alex", "Alex", "different-alex-test-password")
+    with TestClient(app, base_url=ORIGIN) as client:
+        login(client, "alex")
+
+
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_browser_runner_cleans_only_its_schema_on_success_and_failure(settings, monkeypatch, exit_code):
+    def schemas():
+        with connect(os.environ["ROOMSYNC_TEST_DATABASE_URL"]) as db, db.cursor() as cur:
+            cur.execute("SELECT nspname FROM pg_namespace")
+            return {row["nspname"] for row in cur}
+
+    baseline = schemas()
+
+    def playwright(command, *, cwd, env, check):
+        test_dsn = env[BROWSER_DSN]
+        schema = parse_dsn(test_dsn)["options"].split("=")[1]
+        assert schemas() == baseline | {schema}
+        with connect(test_dsn) as db, db.cursor() as cur:
+            cur.execute("SELECT count(*) AS total FROM members")
+            assert cur.fetchone()["total"] == 2
+        return CompletedProcess(command, exit_code)
+
+    monkeypatch.setattr(run_browser_tests.subprocess, "run", playwright)
+    assert run_browser_tests.run_browser_tests([]) == exit_code
+    assert schemas() == baseline
+
+
 @pytest.mark.parametrize(("total", "payable", "remainder"), [(6000, 3000, 3000), (6001, 3000, 3001), (1, 0, 1)])
 def test_split_and_status(accounts, total, payable, remainder):
     alex, sam = accounts
@@ -106,6 +143,7 @@ def test_report_confirm_and_persist(app, accounts):
     pending = detail(sam, expense_id)
     assert pending["outstanding_minor"] == 3000
     assert pending["shares"][0]["status"] == "PAYMENT_REPORTED"
+    assert pending["shares"][0]["payment_url"] is None
     assert pending["shares"][0]["payments"][0]["status"] == "REPORTED"
     assert write(sam, f"/api/shares/{share['id']}/payments", AMOUNT).status_code == 409
     assert write(sam, f"/api/payments/{payment_id}/confirm", AMOUNT).status_code == 403
@@ -150,6 +188,7 @@ def test_recipient_rejects_with_reason_then_debtor_can_report_again(accounts):
     assert rejected.json() == {"id": first, "status": "REJECTED"}
     after = detail(sam, expense_id)
     share = after["shares"][0]
+    assert share["payment_url"] == MOCK_URL
     assert after["outstanding_minor"] == 3000 and share["status"] == "UNPAID"
     assert share["payments"][0]["amount_minor"] == 3000
     assert share["payments"][0]["reason"] == reason["reason"]

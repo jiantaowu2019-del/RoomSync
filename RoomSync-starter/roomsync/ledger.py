@@ -87,7 +87,7 @@ def expense_detail(cur, expense_id, actor_id, links):
         share["status"] = share_status(share)
         share["payment_url"] = (
             links.recipients.get(recipient)
-            if actor_id == share["debtor_id"] and share["outstanding_minor"] else None
+            if actor_id == share["debtor_id"] and share["status"] == "UNPAID" else None
         )
         cur.execute("""
             SELECT p.id, p.amount_minor, p.reported_by, p.created_at,
