@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
-import { api, ApiError, money, parseCents, submit, type Expense, type ExpenseRow, type Payment, type Session, type Share } from "./api";
+import { api, ApiError, money, submit, type Expense, type ExpenseRow, type Group, type GroupDetail, type Payment, type Session, type Share } from "./api";
+import { ExpenseForm, type ExpenseDraft } from "./ExpenseForm";
 import "./styles.css";
 
 const activity: Record<string, string> = {
@@ -51,31 +52,50 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
 }
 
 function Ledger({ session, onLogout }: { session: Session; onLogout: () => void }) {
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [group, setGroup] = useState<GroupDetail | null>(null);
   const [rows, setRows] = useState<ExpenseRow[]>([]);
   const [selected, setSelected] = useState<Expense | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(true);
   const pending = useRef(new Map<string, string>());
 
-  async function refresh(id?: number) {
-    const expenses = await api<ExpenseRow[]>("/expenses");
+  async function openLedger(groupId: number | null, id?: number) {
+    const [detail, expenses] = await Promise.all([
+      groupId === null ? Promise.resolve(null) : api<GroupDetail>(`/groups/${groupId}`),
+      api<ExpenseRow[]>(groupId === null ? "/expenses" : `/groups/${groupId}/expenses`),
+    ]);
     const nextId = id ?? expenses[0]?.id;
+    const expense = nextId === undefined ? null : await api<Expense>("/expenses/" + nextId);
+    setGroup(detail);
     setRows(expenses);
-    setSelected(nextId === undefined ? null : await api<Expense>("/expenses/" + nextId));
+    setSelected(expense);
+  }
+
+  async function refreshGroups() {
+    setGroups(await api<Group[]>("/groups"));
+  }
+
+  async function refresh() {
+    await Promise.all([refreshGroups(), openLedger(group?.id ?? null, selected?.id)]);
   }
 
   useEffect(() => {
-    refresh().catch(error => setError(errorMessage(error))).finally(() => setBusy(false));
+    void run(refresh);
   }, []);
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
     setError("");
+    setNotice("");
     try {
       await action();
+      return true;
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) onLogout();
       else setError(errorMessage(error));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -94,46 +114,70 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
     }
   }
 
-  function addExpense(event: FormEvent<HTMLFormElement>) {
+  function addGroup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
-    const fields = new FormData(form);
-    const total = parseCents(String(fields.get("total")));
-    if (total === null) {
-      setError("Enter a positive amount in USD with up to two decimal places.");
-      return;
-    }
+    const payload = { name: String(new FormData(form).get("name")).trim() };
     void run(async () => {
-      const body = JSON.stringify({ description: String(fields.get("description")).trim(), total_minor: total });
-      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
+      const result = await write<{ id: number }>("/groups", payload);
+      await Promise.all([refreshGroups(), openLedger(result.id)]);
+      pending.current.delete("/groups\n" + JSON.stringify(payload));
+      form.reset();
+    });
+  }
+
+  function invite(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!group) return;
+    const form = event.currentTarget;
+    const username = String(new FormData(form).get("username")).trim();
+    void run(async () => {
+      await submit(`/groups/${group.id}/invitations`, JSON.stringify({ username }));
+      form.reset();
+      setNotice("Invitation saved.");
+    });
+  }
+
+  function join(groupId: number) {
+    void run(async () => {
+      await api(`/groups/${groupId}/join`, { method: "POST" });
+      await Promise.all([refreshGroups(), openLedger(groupId)]);
+    });
+  }
+
+  async function addExpense(draft: ExpenseDraft) {
+    if (!group) return false;
+    const path = `/groups/${group.id}/expenses`;
+    return run(async () => {
+      const body = JSON.stringify(draft);
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(path + "\n" + body));
       const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
       const storageKey = `roomsync:expense:${session.viewer.id}:${fingerprint}`;
       const key = sessionStorage.getItem(storageKey) ?? crypto.randomUUID();
       sessionStorage.setItem(storageKey, key);
       let result: { id: number };
       try {
-        result = await submit<{ id: number }>("/expenses", body, key);
+        result = await submit<{ id: number }>(path, body, key);
       } catch (error) {
         if (error instanceof ApiError && error.status === 422) sessionStorage.removeItem(storageKey);
         throw error;
       }
-      await refresh(result.id);
+      await openLedger(group.id, result.id);
       sessionStorage.removeItem(storageKey);
-      form.reset();
     });
   }
 
   async function updatePayment(path: string, fields: object) {
     await run(async () => {
       await write(path, fields);
-      await refresh(selected?.id);
+      await openLedger(group?.id ?? null, selected?.id);
       pending.current.delete(path + "\n" + JSON.stringify(fields));
     });
   }
 
   return <>
     <div className="page-heading">
-      <div><h1>Shared expenses</h1><p>With {session.other_member.display_name}</p></div>
+      <div><h1>Shared expenses</h1><p>{group?.name ?? "Historical expenses"}</p></div>
       <div className="account">
         <span>{session.viewer.display_name}</span>
         <button className="quiet" disabled={busy} onClick={() => void run(async () => {
@@ -143,22 +187,42 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
       </div>
     </div>
     {error && <p className="error" role="alert">{error}</p>}
+    {notice && <p role="status">{notice}</p>}
     <div className="workspace">
       <aside>
         <section className="panel">
-          <h2>New expense</h2>
-          <form onSubmit={addExpense}>
-            <label>Description<input name="description" placeholder="Groceries" required maxLength={160} /></label>
-            <label>Total (USD)<input name="total" inputMode="decimal" placeholder="0.00" required maxLength={20} /></label>
-            <button disabled={busy}>Add expense</button>
+          <div className="row"><h2>Groups</h2>
+            <button className="quiet" disabled={busy} onClick={() => void run(refresh)}>Refresh</button>
+          </div>
+          <form onSubmit={addGroup}>
+            <label>Group name<input name="name" required maxLength={160} /></label>
+            <button disabled={busy}>Create group</button>
           </form>
+          <nav className="group-list" aria-label="Ledgers">
+            <button className="secondary" disabled={busy} aria-current={group === null ? "page" : undefined}
+              onClick={() => void run(() => openLedger(null))}>Historical expenses</button>
+            {groups.map(entry => entry.status === "active"
+              ? <button className="secondary" key={entry.id} disabled={busy}
+                  aria-current={group?.id === entry.id ? "page" : undefined}
+                  onClick={() => void run(() => openLedger(entry.id))}>{entry.name}</button>
+              : <button className="secondary" key={entry.id} disabled={busy}
+                  onClick={() => join(entry.id)}>Accept invitation to {entry.name}</button>)}
+          </nav>
         </section>
+        {group?.creator_id === session.viewer.id && <section className="panel">
+          <h2>Invite a member</h2>
+          <form onSubmit={invite}>
+            <label>Invite username<input name="username" required maxLength={64} /></label>
+            <button disabled={busy}>Send invitation</button>
+          </form>
+        </section>}
+        {group && <ExpenseForm key={group.id} members={group.members} payer={session.viewer} busy={busy} save={addExpense} />}
         <section className="panel expense-list">
-          <div className="row"><h2>Expenses</h2><button className="quiet" disabled={busy} onClick={() => void run(() => refresh(selected?.id))}>Refresh</button></div>
+          <h2>{group ? "Group expenses" : "Historical expenses"}</h2>
           {rows.length === 0 && <p>{busy ? "Loading expenses…" : "No expenses yet."}</p>}
           {rows.map(row => <button type="button" key={row.id} className="expense-item"
             aria-current={selected?.id === row.id ? "true" : undefined} disabled={busy}
-            onClick={() => void run(() => refresh(row.id))}>
+            onClick={() => void run(() => openLedger(group?.id ?? null, row.id))}>
             <span>{row.description}<small>Paid by {row.original_payer}</small></span>
             <span>{money(row.total_minor)}{badge(row.status)}</span>
           </button>)}
@@ -167,14 +231,23 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
       <div>
         {selected ? <section className="panel detail">
           <div className="row title"><h2>{selected.description}</h2>{badge(selected.status)}</div>
-          <p>{selected.original_payer} paid {money(selected.total_minor)} for {selected.original_payer} and {selected.other_member}.</p>
+          <p>{selected.original_payer} paid {money(selected.total_minor)}.</p>
+          <section aria-label="Saved allocations">
+            <h3>Allocations</h3>
+            <ul className="allocations">{selected.allocations.map(allocation => <li key={allocation.member_id}>
+              <span>{allocation.display_name}</span><strong>{money(allocation.amount_minor)}</strong>
+            </li>)}</ul>
+          </section>
           <div className="balance">
             <span>Outstanding balance</span>
             <strong>{money(selected.outstanding_minor)}</strong>
           </div>
-          {selected.shares.length === 0 && <p>The original payer covers this one-cent expense. There is no payment due.</p>}
+          {selected.shares.length === 0 && <p>No payments are due for this expense.</p>}
+          {selected.shares.length > 0 && !selected.allocations.some(allocation => allocation.member_id === session.viewer.id) &&
+            <p>You have no allocation for this expense.</p>}
           {selected.shares.map(share => <ShareView key={share.id} share={share}
-            payer={share.debtor_id === session.viewer.id} busy={busy} update={updatePayment} />)}
+            payer={share.debtor_id === session.viewer.id} recipient={share.recipient_id === session.viewer.id}
+            groupVisible={selected.group_id !== null} busy={busy} update={updatePayment} />)}
           <div className="activity">
             <h3>Activity</h3>
             <ol>{selected.audit.map(event => <li key={event.id}>
@@ -182,7 +255,7 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
               <time dateTime={event.created_at}>{new Date(event.created_at).toLocaleString()}</time>
             </li>)}</ol>
           </div>
-        </section> : <section className="panel empty"><p>{busy ? "Loading expense details…" : "Add an expense to view its split and payment history."}</p></section>}
+        </section> : <section className="panel empty"><p>{busy ? "Loading expense details…" : "No expense selected."}</p></section>}
       </div>
     </div>
   </>;
@@ -190,9 +263,12 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
 
 type Mutate = (path: string, body: object) => Promise<void>;
 
-function ShareView({ share, payer, busy, update }: { share: Share; payer: boolean; busy: boolean; update: Mutate }) {
-  return <div className="share">
-    <div className="row"><h3>{share.debtor} owes {share.recipient}</h3>{badge(share.status)}</div>
+function ShareView({ share, payer, recipient, groupVisible, busy, update }: {
+  share: Share; payer: boolean; recipient: boolean; groupVisible: boolean; busy: boolean; update: Mutate;
+}) {
+  return <section className="share" aria-label={`${share.debtor}'s share`}>
+    <div className="row"><h3>{share.debtor} → {share.recipient}</h3>{badge(share.status)}</div>
+    <p>Remaining: {money(share.outstanding_minor)}</p>
     {payer && share.status === "UNPAID" && <>
       <p>Make payment outside RoomSync. The balance changes after {share.recipient} confirms receipt.</p>
       <div className="actions">
@@ -208,14 +284,16 @@ function ShareView({ share, payer, busy, update }: { share: Share; payer: boolea
     {share.payments.map(payment => <div className="payment" key={payment.id}>
       <div className="row"><strong>{money(payment.amount_minor)} report</strong>{badge(payment.status)}</div>
       {payment.reason && <p>Reason: {payment.reason}</p>}
-      {payment.status === "REPORTED" && (payer
-        ? <p>Waiting for {share.recipient} to confirm receipt.</p>
-        : <Decide payment={payment} busy={busy} update={update} />)}
+      {payment.status === "REPORTED" && (recipient
+        ? <Decide payment={payment} groupVisible={groupVisible} busy={busy} update={update} />
+        : <p>Waiting for {share.recipient} to confirm receipt.</p>)}
     </div>)}
-  </div>;
+  </section>;
 }
 
-function Decide({ payment, busy, update }: { payment: Payment; busy: boolean; update: Mutate }) {
+function Decide({ payment, groupVisible, busy, update }: {
+  payment: Payment; groupVisible: boolean; busy: boolean; update: Mutate;
+}) {
   const [showReject, setShowReject] = useState(false);
   const path = `/payments/${payment.id}`;
   return <>
@@ -234,6 +312,7 @@ function Decide({ payment, busy, update }: { payment: Payment; busy: boolean; up
       void update(path + "/reject", { reason: String(fields.get("reason")).trim() });
     }}>
       <label>Rejection reason<textarea name="reason" required maxLength={500} /></label>
+      {groupVisible && <p>Visible to group members.</p>}
       <button className="secondary" disabled={busy}>Submit rejection</button>
     </form>}
   </>;

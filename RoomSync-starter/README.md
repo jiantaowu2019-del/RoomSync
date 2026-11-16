@@ -1,13 +1,15 @@
-# RoomSync — Vertical Slice 1
+# RoomSync — Vertical Slice 2
 
-RoomSync records the equal split of a USD expense and tracks an external payment
-from the payer's report through the designated recipient's manual confirmation.
-The two demo members are Alex and Sam.
+RoomSync splits a group expense in USD and tracks each member's outstanding
+share from payment report through receipt confirmation. Alex, Sam, Casey, and
+Jordan are the demo accounts for the first Slice 2 delivery.
 
 ## Run locally on Windows
 
 Install Python 3.12 or later, Node.js 22.12 or later, and PostgreSQL. Run the
 following in PowerShell from the directory containing `compose.yaml`.
+Stop an existing RoomSync web process before replacing the frontend build or
+running setup. The PostgreSQL container can stay running.
 
 ```powershell
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
@@ -18,7 +20,11 @@ npm.cmd --prefix frontend run build
 ```
 
 Reuse an existing `.venv` if it is already set up. Set distinct local passwords
-for Alex and Sam in `.env` (12–256 characters). Setup rejects the example values.
+for Alex and Sam in `.env` (12–256 characters). Keep the existing values if setup
+has already seeded their accounts. For the four-account walkthrough, also set
+`ROOMSYNC_CASEY_PASSWORD` and `ROOMSYNC_JORDAN_PASSWORD`. You can set both in
+the current PowerShell environment before running setup, leaving `.env` intact.
+All four passwords must be distinct. Setup rejects the example values.
 For the included Docker database, set `ROOMSYNC_DB_PORT` to the published host
 port and `ROOMSYNC_DB_PASSWORD` to the current database password. Both Compose
 and the app use these values. The default host port is `5432`. A custom value
@@ -39,6 +45,7 @@ With Docker Desktop running, use the command that matches your setup.
   Changing `.env` or Compose settings does not change the existing role password.
 
 Load the settings in the current shell, apply the migration, and start the app.
+Setup preserves the existing Slice 1 balances and history.
 Use a fresh PowerShell session when removing a previously loaded URL override.
 
 ```powershell
@@ -52,15 +59,40 @@ if ($LASTEXITCODE -ne 0) { throw 'RoomSync setup failed.' }
 .\.venv\Scripts\python.exe -m uvicorn roomsync.http:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-Open [the local app](http://127.0.0.1:8000) in two separate browser profiles.
-Log in as `alex` and `sam` with the passwords configured for each. Setup seeds
+Open [the local app](http://127.0.0.1:8000) in four independent browser profiles.
+Log in as `alex`, `sam`, `casey`, and `jordan` with their configured passwords. Setup seeds
 the accounts once. A subsequent setup run checks the existing credentials and
 reports a mismatch. If an old account was initialized with an example password,
 its new logins are blocked pending an authorized credential correction.
 
-## Manual acceptance
+## Manual acceptance for Slice 2
 
-1. As Alex, add a $60 expense. As Sam, refresh the expense list and verify the
+1. As Alex, use **Create group**, then invite `sam`, `casey`, and `jordan`.
+   Accept in the other three profiles. Use **Refresh** in Alex's profile to
+   load the active roster.
+2. Enter a $120.00 expense. Check **Select all group members** and verify a
+   $30.00 preview for each member. Post and check the $90.00 outstanding total.
+3. As Sam, report $30.00 paid. The total stays at $90.00. Refresh as Alex and
+   confirm Sam's receipt. Verify Sam is Settled, Casey and Jordan each still
+   owe $30.00, and the expense is Open with $60.00 outstanding.
+4. Report and confirm Casey's and Jordan's shares. The final outstanding
+   total is $0.00 and the expense is Settled.
+5. Post another expense with Alex, Sam, and Casey selected. Jordan can read
+   the expense, report status, rejection reason, and activity. Jordan has no
+   payment actions. Use $120.03 with all four selected to compare the two
+   remainder previews and $0.01 to verify zero-cent allocations.
+6. Open **Historical expenses** as Alex or Sam to view earlier two-person
+   records and handle any pending reports. Casey and Jordan cannot read those
+   records.
+
+The mock payment link is optional for manual acceptance. Opening it or
+returning leaves the balance unchanged. The automated browser test intercepts
+the reserved mock host with a synthetic destination.
+
+## Legacy Slice 1 checks
+
+1. Open an existing $60 two-person expense or use a Slice 1 test fixture.
+   As Sam, refresh the expense list and verify the
    $30 outstanding balance and Alex's configured payment link.
 2. Open the link in Sam's browser, then return to RoomSync. The example
    `pay.example.test` host is a placeholder. The automated browser test
@@ -71,8 +103,8 @@ its new logins are blocked pending an authorized credential correction.
 4. Refresh Sam's view. Check the rejected report, reason, and restored link, then report again.
    Refresh Alex's view and confirm receipt. Check that both members can see the
    $0 balance, Settled status, and previous rejection in the history.
-5. Add a $0.01 expense. Check that it is Settled with no Payable Share. Add
-   a $60.01 expense and check that the other member owes $30.
+5. A pre-existing $0.01 expense remains Settled with no Payable Share.
+   A pre-existing $60.01 expense has a $30 original Payable Share.
 
 ## Run automated tests
 
@@ -101,8 +133,9 @@ server on Windows. The tests use mock payment links.
 
 ## External payment configuration
 
-`ROOMSYNC_ALEX_PAYMENT_URL` and `ROOMSYNC_SAM_PAYMENT_URL` bind a URL to each
-recipient. Each URL is optional. Slice 1 accepts only the reserved mock
+The optional `ROOMSYNC_ALEX_PAYMENT_URL`, `ROOMSYNC_SAM_PAYMENT_URL`,
+`ROOMSYNC_CASEY_PAYMENT_URL`, and `ROOMSYNC_JORDAN_PAYMENT_URL` bind mock
+links to recipients. The runtime accepts only the reserved mock
 destination `https://pay.example.test/u/<handle>`. Invalid values and attempts
 to change the host or path policy fail at startup. A future live provider
 requires owner approval and an explicit allowlist in code.

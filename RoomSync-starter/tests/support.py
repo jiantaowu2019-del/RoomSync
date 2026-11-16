@@ -10,7 +10,7 @@ from roomsync.config import MOCK_HOST, MOCK_PATH_PREFIX, PaymentLinks, Settings
 from roomsync.db import connect, migrate
 from roomsync.setup import DEMO_USERS, seed_member
 
-PASSWORDS = {"alex": "demo-alex-test-123", "sam": "demo-sam-test-123"}
+PASSWORDS = {name: f"demo-{name}-test-123" for name in DEMO_USERS}
 MOCK_URL = f"https://{MOCK_HOST}/u/alex"
 BROWSER_DSN = "ROOMSYNC_BROWSER_TEST_DSN"
 
@@ -34,7 +34,7 @@ def browser_settings(origin):
 
 
 @contextmanager
-def isolated_database():
+def temporary_schema():
     base_url = validate_test_dsn(os.environ.get("ROOMSYNC_TEST_DATABASE_URL", ""))
     schema = "test_" + uuid4().hex
     quoted_schema = sql.Identifier(schema)
@@ -42,14 +42,20 @@ def isolated_database():
         cur.execute(sql.SQL("CREATE SCHEMA {}").format(quoted_schema))
     schema_dsn = make_dsn(base_url, options=f"-c search_path={schema}")
     try:
-        with connect(schema_dsn) as db, db.cursor() as cur:
-            migrate(db)
-            for username, display_name in DEMO_USERS.items():
-                seed_member(cur, username, display_name, PASSWORDS[username])
         yield schema_dsn
     finally:
         with connect(base_url) as db, db.cursor() as cur:
             cur.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(quoted_schema))
+
+
+@contextmanager
+def isolated_database():
+    with temporary_schema() as dsn:
+        with connect(dsn) as db, db.cursor() as cur:
+            migrate(db)
+            for username, display_name in DEMO_USERS.items():
+                seed_member(cur, username, display_name, PASSWORDS[username])
+        yield dsn
 
 
 @contextmanager

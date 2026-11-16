@@ -1,5 +1,8 @@
 export type Member = { id: number; display_name: string };
-export type Session = { viewer: Member; other_member: Member };
+export type Session = { viewer: Member };
+export type Group = { id: number; name: string; creator_id: number; status: "invited" | "active" };
+export type GroupDetail = Pick<Group, "id" | "name" | "creator_id"> & { members: Member[] };
+export type RemainderPolicy = "PAYER" | "EVEN";
 export type ExpenseRow = {
   id: number;
   description: string;
@@ -18,6 +21,7 @@ export type Payment = {
 export type Share = {
   id: number;
   debtor_id: number;
+  recipient_id: number;
   debtor: string;
   recipient: string;
   outstanding_minor: number;
@@ -26,7 +30,10 @@ export type Share = {
   payments: Payment[];
 };
 export type Expense = ExpenseRow & {
-  other_member: string;
+  original_payer_id: number;
+  group_id: number | null;
+  remainder_policy: RemainderPolicy | null;
+  allocations: { member_id: number; display_name: string; amount_minor: number }[];
   shares: Share[];
   audit: { id: number; actor: string; kind: string; created_at: string }[];
 };

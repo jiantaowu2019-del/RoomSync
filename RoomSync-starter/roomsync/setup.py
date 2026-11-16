@@ -1,11 +1,8 @@
 import os
 
 from .auth import EXAMPLE_PASSWORDS, password_hash, password_matches
-from .config import Settings
+from .config import DEMO_USERS, Settings
 from .db import connect, migrate
-
-DEMO_USERS = {"alex": "Alex", "sam": "Sam"}
-
 
 def seed_member(cur, username: str, name: str, password: str):
     cur.execute("""
@@ -27,10 +24,14 @@ def demo_passwords():
         username: os.getenv(f"ROOMSYNC_{username.upper()}_PASSWORD", "")
         for username in DEMO_USERS
     }
+    required = {"alex", "sam"}
+    if passwords["casey"] or passwords["jordan"]:
+        required.update(("casey", "jordan"))
+    passwords = {username: password for username, password in passwords.items() if username in required}
     if any(not 12 <= len(password) <= 256 or password in EXAMPLE_PASSWORDS for password in passwords.values()):
         raise SystemExit("Set each demo password to a non-example value between 12 and 256 characters.")
-    if len(set(passwords.values())) != len(DEMO_USERS):
-        raise SystemExit("Alex and Sam must have different demo passwords.")
+    if len(set(passwords.values())) != len(passwords):
+        raise SystemExit("Demo accounts must have different passwords.")
     return passwords
 
 
@@ -40,8 +41,8 @@ def main():
     with connect(settings.database_url) as db:
         migrate(db)
         with db.cursor() as cur:
-            for username, name in DEMO_USERS.items():
-                seed_member(cur, username, name, passwords[username])
+            for username, password in passwords.items():
+                seed_member(cur, username, DEMO_USERS[username], password)
     print("RoomSync schema and demo users are ready.")
 
 

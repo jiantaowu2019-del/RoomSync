@@ -6,6 +6,7 @@ from urllib.parse import quote, urlsplit
 
 MOCK_HOST = "pay.example.test"
 MOCK_PATH_PREFIX = "/u/"
+DEMO_USERS = {"alex": "Alex", "sam": "Sam", "casey": "Casey", "jordan": "Jordan"}
 DEFAULT_DB_PORT = "5432"
 DEFAULT_DB_PASSWORD = "roomsync-local"
 
@@ -84,7 +85,7 @@ class Settings:
                 path_prefix=os.getenv("ROOMSYNC_PAYMENT_PATH_PREFIX", MOCK_PATH_PREFIX),
                 recipients={
                     username: url
-                    for username in ("alex", "sam")
+                    for username in DEMO_USERS
                     if (url := os.getenv(f"ROOMSYNC_{username.upper()}_PAYMENT_URL"))
                 },
             ),

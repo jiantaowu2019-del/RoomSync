@@ -77,7 +77,7 @@ def test_migration_is_repeatable(settings):
     with connect(settings.database_url) as db, db.cursor() as cur:
         migrate(db)
         cur.execute("SELECT count(*) AS count FROM schema_migrations")
-        assert cur.fetchone()["count"] == 1
+        assert cur.fetchone()["count"] == 2
 
 
 def test_setup_rejects_changed_password_without_overwriting_existing_account(settings, app):
@@ -105,7 +105,7 @@ def test_browser_runner_cleans_only_its_schema_on_success_and_failure(settings, 
         assert schemas() == baseline | {schema}
         with connect(test_dsn) as db, db.cursor() as cur:
             cur.execute("SELECT count(*) AS total FROM members")
-            assert cur.fetchone()["total"] == 2
+            assert cur.fetchone()["total"] == 4
         return CompletedProcess(command, exit_code)
 
     monkeypatch.setattr(run_browser_tests.subprocess, "run", playwright)

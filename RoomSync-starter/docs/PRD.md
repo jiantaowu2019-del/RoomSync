@@ -23,7 +23,7 @@ Each row is a requirement topic. 'Confirmed' means we discussed and chose the ru
 | R01 | Payment and settlement status | Each payable share has its own outstanding balance and settlement status. Track unpaid, payment-reported, and recipient-confirmed payments separately; an external payment-link click or payer claim does not itself settle a share. A payable share is Settled only when its remaining balance reaches zero through confirmed payments and explicitly authorized adjustments. An Expense is Settled only when every currently valid payable share is Settled. Settlement does not erase dispute or payment history. | Confirmed core; adjustment semantics open | Slice 1 |
 | R02 | Partial payments | The data model must support multiple payment records associated with a single payable share. Each confirmed payment reduces the share's remaining balance by the confirmed amount. Partial payments must never automatically mark a share as fully Settled. Slice 1 implements full-payment settlement only; partial-payment user interactions and related workflows are deferred to Slice 2. The initial data model must not assume a one-to-one relationship between payable shares and payments. | Confirmed design direction; partial-payment workflow deferred | Slice 1 data model / Slice 2 implementation |
 | R03 | Amount changes | Preserve original expense and each amendment; notify affected members of changes before paying where possible. Once settled or disputed, don't mutate existing financial facts in place; correction is a linked adjustment/version. | Confirmed principle; approval rules open | Slice 1 design, later refinement |
-| R04 | Multiple payers and splits | Scope Slice 1 to one original payer, two known authenticated users, equal split; design room for multi-payer and complex splits later. | Proposed scope | Slice 1 / 2 |
+| R04 | Multiple payers and splits | Slice 1 uses one payer and a two-person equal split. The first Slice 2 delivery supports one payer, group expenses, selected participants, and two equal-split remainder policies. Multiple original payers and additional split types remain open. | Confirmed through Slice 2 first delivery | Slice 1 / 2 |
 | R05 | Identity and authorization | Only the actual authenticated recipient can attest receipt. No participant may impersonate the other or modify another user's payment status. | Confirmed principle; auth mechanism open | Slice 1 |
 | R06 | External payment links | Use a prevalidated receiver-configured third-party payment link (for example PayPal.Me, subject to allowed use). Opening it is not verification. No card/bank credentials stored. No merchant checkout used for consumer P2P by assumption. | Confirmed Level 2; provider/format open | Slice 1 |
 | R07 | Duplicate/cancel/reversal | Don't double-count retries, duplicate confirmations or concurrent clicks. Preserve history of correction/reversal; resolve cancellation/refund semantics before implementation. | Confirmed invariants; edge behavior open | Slice 1 |
@@ -39,6 +39,15 @@ Each row is a requirement topic. 'Confirmed' means we discussed and chose the ru
 3. Appeal, structured dialogue, group vote and permanent dissent record.
 4. Optional reminders, extension requests and notification limits.
 5. Exit, historical access and export.
+
+### Slice 2 first delivery (approved)
+
+- Any signed-in user can create a group. Only the creator invites existing accounts by username. Invitees become active members after accepting.
+- An active member can post an expense as its sole original payer. The payer is selected by default and always participates. The payer can select active members individually or select all and deselect individual members. At least two people are required. The form previews the participant count and each allocation before posting. Posting fixes the participant list and allocations.
+- Active members can read all expenses in their group, including those posted before they joined. They can see allocations, balances, settlement status, payment reports, rejection reasons, and activity. Pending invitees and outsiders have no group ledger access. Existing two-person expenses remain private to their original participants.
+- Only the debtor reports a payment for a Payable Share. Only its designated recipient confirms or rejects it. Rejecting a report requires a reason visible to the group. Only the debtor gets the mock payment link. Reports cover the full outstanding share balance in this delivery.
+- When an equal split leaves a remainder, the payer selects a policy. The default assigns all leftover cents to the original payer. The even distribution policy assigns at most one extra cent per person, starting with the original payer and then by ascending member ID. The server calculates and saves the policy and allocations. Zero-cent allocations create no Payable Share.
+- The next Slice 2 delivery covers partial payments. Multi-expense balance aggregation is scheduled separately.
 
 These are incremental releases of an integrated product, not permission to defer foundational protections needed in Slice 1.
 
@@ -59,6 +68,6 @@ These are incremental releases of an integrated product, not permission to defer
 ## 7. Nonfunctional requirements
 - Amounts represented in integer cents; preserve exact sums with deterministic remainder allocation.
 - All money-state transitions server-side, authorized and atomic; append immutable audit events.
-- Nonparticipants cannot read private group records. Access after exit limited to relevant history.
+- Private group records require active group membership in the first Slice 2 delivery. Legacy two-person expenses require original participation. Access after exit is limited to relevant history.
 - No unbounded automated reminders; no unilateral changes to another person's claimed settlement status.
 - Testable with synthetic data and mock payment links; initial version does not require live funds.

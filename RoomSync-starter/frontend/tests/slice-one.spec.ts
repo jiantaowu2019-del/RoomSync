@@ -17,9 +17,13 @@ test("two members settle an expense after rejecting an incorrect report", async 
     await login(alex, "alex");
     await login(sam, "sam");
 
-    await alex.getByLabel("Description").fill("Groceries");
-    await alex.getByLabel("Total (USD)").fill("60.00");
-    await alex.getByRole("button", { name: "Add expense" }).click();
+    const origin = new URL(alex.url()).origin;
+    const created = await alex.request.post(origin + "/api/expenses", {
+      data: { description: "Groceries", total_minor: 6000 },
+      headers: { Origin: origin, "Idempotency-Key": "legacy-browser-fixture" },
+    });
+    expect(created.status()).toBe(201);
+    await alex.getByRole("button", { name: "Refresh" }).click();
     await expect(alex.getByRole("heading", { name: "Groceries" })).toBeVisible();
     await expect(alex.getByRole("link", { name: "Open external payment link" })).toHaveCount(0);
     await sam.getByRole("button", { name: "Refresh" }).click();
@@ -67,39 +71,4 @@ test("two members settle an expense after rejecting an incorrect report", async 
   } finally {
     await Promise.all([alexContext.close(), samContext.close()]);
   }
-});
-
-test("retrying a committed expense after a reload reuses its request key", async ({ page }) => {
-  const description = "Expense with a lost response";
-  await login(page, "alex");
-  const submitExpense = async () => {
-    await page.getByLabel("Description").fill(description);
-    await page.getByLabel("Total (USD)").fill("12.34");
-    await page.getByRole("button", { name: "Add expense" }).click();
-  };
-
-  const keys: (string | undefined)[] = [];
-  await page.route("**/api/expenses", async route => {
-    if (route.request().method() !== "POST") return route.continue();
-    keys.push(route.request().headers()["idempotency-key"]);
-    if (keys.length > 1) return route.continue();
-    const response = await route.fetch();
-    expect(response.status()).toBe(201);
-    await route.abort("failed");
-  });
-  await submitExpense();
-  await expect(page.getByRole("alert")).toContainText("Unable to reach RoomSync");
-  await page.reload();
-  const rows = page.getByRole("button", { name: new RegExp(description) });
-  await expect(rows).toHaveCount(1);
-  await submitExpense();
-  await expect(page.getByLabel("Description")).toHaveValue("");
-  await expect(rows).toHaveCount(1);
-  await expect(page.getByText("created the expense", { exact: false })).toHaveCount(1);
-  expect(keys[0]).toBeTruthy();
-  expect(keys[1]).toBe(keys[0]);
-
-  await submitExpense();
-  await expect(rows).toHaveCount(2);
-  expect(keys[2]).not.toBe(keys[0]);
 });

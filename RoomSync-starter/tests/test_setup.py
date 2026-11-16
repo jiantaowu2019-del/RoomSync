@@ -24,7 +24,20 @@ def test_setup_rejects_missing_example_or_reused_passwords(monkeypatch, alex, sa
 def test_setup_accepts_distinct_local_passwords(monkeypatch):
     monkeypatch.setenv("ROOMSYNC_ALEX_PASSWORD", "valid-alex-test-password")
     monkeypatch.setenv("ROOMSYNC_SAM_PASSWORD", "valid-sam-test-password")
+    monkeypatch.delenv("ROOMSYNC_CASEY_PASSWORD", raising=False)
+    monkeypatch.delenv("ROOMSYNC_JORDAN_PASSWORD", raising=False)
     assert demo_passwords() == {"alex": "valid-alex-test-password", "sam": "valid-sam-test-password"}
+
+
+def test_setup_requires_both_additional_demo_passwords(monkeypatch):
+    monkeypatch.setenv("ROOMSYNC_ALEX_PASSWORD", "valid-alex-test-password")
+    monkeypatch.setenv("ROOMSYNC_SAM_PASSWORD", "valid-sam-test-password")
+    monkeypatch.setenv("ROOMSYNC_CASEY_PASSWORD", "valid-casey-test-password")
+    monkeypatch.delenv("ROOMSYNC_JORDAN_PASSWORD", raising=False)
+    with pytest.raises(SystemExit, match="non-example"):
+        demo_passwords()
+    monkeypatch.setenv("ROOMSYNC_JORDAN_PASSWORD", "valid-jordan-test-password")
+    assert set(demo_passwords()) == {"alex", "sam", "casey", "jordan"}
 
 
 def test_login_rejects_a_legacy_example_password():

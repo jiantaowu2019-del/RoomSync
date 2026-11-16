@@ -1,8 +1,8 @@
-# RoomSync — Vertical Slice 1 design
+# RoomSync — Slice 1 baseline and Slice 2 first delivery
 
 Approved scope recorded in the owner’s Design Review. The PRD remains the product baseline.
 
-## Workflow and storage
+## Slice 1 workflow and storage
 
 Two seeded users share a USD expense equally. The original payer creates it and
 covers the extra cent if the total is odd. The other member owes floor(total / 2).
@@ -95,8 +95,53 @@ Tests require a separate database with a `_test` suffix. The browser test runner
 owns the lifecycle of its random schema and supplies the server with the
 isolated connection. Playwright passes its configured loopback port to the server.
 
+## Slice 2 first delivery
+
+`groups` records the creator. `group_memberships` records one invitation or
+active membership per group and account. Group creation adds the creator as an
+active member in the same transaction. The creator invites existing accounts by
+username. Only the invited account can activate its membership.
+
+A new group expense has a group ID and a recorded remainder policy. It writes one
+immutable `expense_allocations` row per participant, including the payer and
+any zero-cent allocations. The server requires at least two distinct active
+members and includes the authenticated payer. A strictly positive non-payer
+allocation creates a Payable Share owed to the payer. The API returns the saved
+allocations, shares, and derived balances. The client previews the same integer
+division and remainder ordering before submitting. Only a nonzero remainder
+shows policy controls. The default assigns the remainder to the payer.
+Even distribution applies one cent to the payer and then to members in
+ascending ID order until the remainder is exhausted.
+
+Migration 002 backfills two allocation rows per Slice 1 expense from its
+original recorded amount and Payable Share. Existing expenses have a null
+group ID. Their identities, amounts, shares, reports, decisions, audit events
+and idempotency records stay intact. The legacy list is scoped to the original
+two participants. The existing payment routes handle legacy pending reports.
+
+| Route | Slice 2 contract |
+| --- | --- |
+| GET /api/session | Resolve the signed-in viewer independently of any group. |
+| GET/POST /api/groups | List the viewer's active groups and pending invitations, or create a group. |
+| GET /api/groups/{id} | Read the group and its active member roster as an active member. |
+| POST /api/groups/{id}/invitations | Invite an existing account by username as the creator. |
+| POST /api/groups/{id}/join | Accept the invitation as its intended account. |
+| GET/POST /api/groups/{id}/expenses | Read the group ledger or post an expense with participant IDs and a remainder policy. |
+| GET /api/expenses | Show the viewer's legacy two-person expenses. |
+| GET /api/expenses/{id} | Include allocations and the existing shares, reports, rejection reasons and activity for authorized viewers. |
+
+Active group membership grants read access to the entire group ledger,
+including previous group expenses and rejection reasons. Acceptance grants no
+access to private two-person expenses. Pending invitees see their invitations.
+The debtor can report only on their own obligation. The recipient can confirm or
+reject only reports on shares payable to them. The group creator has the same
+payment permissions as every other member. The rejection form says that group
+members can read the reason. Share-level row locks and idempotency rules still
+apply. Expense remains OPEN while any share has an outstanding balance.
+
 ## Deferred
 
 T10's full correction workflow, amendments, cancellation, confirmed payment
 reversal, partial payment UI and operations, disputes, voting, reminders, and
-more complex expense allocation remain outside Slice 1.
+multi-expense balance aggregation, and additional split types remain outside
+the first Slice 2 delivery.

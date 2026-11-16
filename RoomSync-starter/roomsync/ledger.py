@@ -1,6 +1,8 @@
 from fastapi import HTTPException
 from psycopg2.extras import Json
 
+from .allocation import equal_allocations
+
 
 def audit(cur, expense_id, actor_id, kind, details, payment_id=None):
     cur.execute("""
@@ -34,18 +36,59 @@ def create_expense(cur, actor_id, description, total_minor):
     """, (actor_id, other["id"], description, total_minor))
     expense_id = cur.fetchone()["id"]
     share_amount = total_minor // 2
-    if share_amount:
-        cur.execute("""
-            INSERT INTO payable_shares (expense_id, debtor_id, recipient_id, amount_minor)
-            VALUES (%s, %s, %s, %s)
-        """, (expense_id, other["id"], actor_id, share_amount))
+    add_allocations(cur, expense_id, actor_id, {
+        actor_id: total_minor - share_amount, other["id"]: share_amount,
+    })
     audit(cur, expense_id, actor_id, "EXPENSE_CREATED", {
         "total_minor": total_minor, "payable_minor": share_amount, "currency": "USD",
     })
     return {"id": expense_id}
 
 
-def list_expenses(cur, actor_id):
+def validate_group_participants(cur, group_id, payer_id, participant_ids):
+    if len(participant_ids) < 2 or len(set(participant_ids)) != len(participant_ids) or payer_id not in participant_ids:
+        raise HTTPException(422, "Select at least two distinct members, including the original payer.")
+    cur.execute("""
+        SELECT member_id FROM group_memberships
+        WHERE group_id = %s AND status = 'active' AND member_id = ANY(%s)
+    """, (group_id, participant_ids))
+    if len(cur.fetchall()) != len(participant_ids):
+        raise HTTPException(422, "All selected participants must be active group members.")
+
+
+def create_group_expense(cur, group_id, actor_id, description, total_minor, participant_ids, remainder_policy):
+    validate_group_participants(cur, group_id, actor_id, participant_ids)
+    allocations = equal_allocations(total_minor, actor_id, participant_ids, remainder_policy)
+    cur.execute("""
+        INSERT INTO expenses (original_payer_id, description, total_minor, currency, group_id, remainder_policy)
+        VALUES (%s, %s, %s, 'USD', %s, %s) RETURNING id
+    """, (actor_id, description, total_minor, group_id, remainder_policy))
+    expense_id = cur.fetchone()["id"]
+    add_allocations(cur, expense_id, actor_id, allocations)
+    audit(cur, expense_id, actor_id, "EXPENSE_CREATED", {
+        "total_minor": total_minor, "currency": "USD", "remainder_policy": remainder_policy,
+        "allocations": allocations,
+    })
+    return {"id": expense_id}
+
+
+def add_allocations(cur, expense_id, payer_id, allocations):
+    cur.executemany("""
+        INSERT INTO expense_allocations (expense_id, member_id, amount_minor) VALUES (%s, %s, %s)
+    """, [(expense_id, member_id, amount) for member_id, amount in allocations.items()])
+    obligations = [
+        (expense_id, member_id, payer_id, amount)
+        for member_id, amount in allocations.items()
+        if member_id != payer_id and amount > 0
+    ]
+    if obligations:
+        cur.executemany("""
+            INSERT INTO payable_shares (expense_id, debtor_id, recipient_id, amount_minor)
+            VALUES (%s, %s, %s, %s)
+        """, obligations)
+
+
+def list_expenses(cur, actor_id, group_id=None):
     cur.execute("""
         SELECT e.id, e.description, e.total_minor, e.created_at, e.currency,
                m.display_name AS original_payer,
@@ -56,9 +99,10 @@ def list_expenses(cur, actor_id):
                    SELECT 1 FROM share_balances s WHERE s.expense_id = e.id AND s.outstanding_minor <> 0
                ) THEN 'OPEN' ELSE 'SETTLED' END AS status
         FROM expenses e JOIN members m ON m.id = e.original_payer_id
-        WHERE %s IN (e.original_payer_id, e.other_member_id)
+        JOIN expense_viewers v ON v.expense_id = e.id
+        WHERE v.member_id = %s AND e.group_id IS NOT DISTINCT FROM %s
         ORDER BY e.id DESC
-    """, (actor_id,))
+    """, (actor_id, group_id))
     return cur.fetchall()
 
 
@@ -67,12 +111,20 @@ def expense_detail(cur, expense_id, actor_id, links):
         SELECT e.*, p.display_name AS original_payer, m.display_name AS other_member
         FROM expenses e
         JOIN members p ON p.id = e.original_payer_id
-        JOIN members m ON m.id = e.other_member_id
-        WHERE e.id = %s AND %s IN (e.original_payer_id, e.other_member_id)
+        LEFT JOIN members m ON m.id = e.other_member_id
+        JOIN expense_viewers v ON v.expense_id = e.id
+        WHERE e.id = %s AND v.member_id = %s
     """, (expense_id, actor_id))
     expense = cur.fetchone()
     if not expense:
         raise HTTPException(404, "Expense not found.")
+
+    cur.execute("""
+        SELECT a.member_id, m.display_name, a.amount_minor
+        FROM expense_allocations a JOIN members m ON m.id = a.member_id
+        WHERE a.expense_id = %s ORDER BY (a.member_id = %s) DESC, a.member_id
+    """, (expense_id, expense["original_payer_id"]))
+    expense["allocations"] = cur.fetchall()
 
     cur.execute("""
         SELECT s.*, d.display_name AS debtor, r.display_name AS recipient,
@@ -118,8 +170,8 @@ def share_status(share):
 def authorize_share(cur, share_id, actor_id):
     cur.execute("""
         SELECT s.id, s.expense_id, s.debtor_id, s.recipient_id
-        FROM payable_shares s JOIN expenses e ON e.id = s.expense_id
-        WHERE s.id = %s AND %s IN (e.original_payer_id, e.other_member_id)
+        FROM payable_shares s JOIN expense_viewers v ON v.expense_id = s.expense_id
+        WHERE s.id = %s AND v.member_id = %s
     """, (share_id, actor_id))
     share = cur.fetchone()
     if share is None:
@@ -133,8 +185,8 @@ def authorize_payment(cur, payment_id, actor_id):
     cur.execute("""
         SELECT p.id, p.share_id, p.amount_minor, s.expense_id, s.recipient_id
         FROM payments p JOIN payable_shares s ON s.id = p.share_id
-        JOIN expenses e ON e.id = s.expense_id
-        WHERE p.id = %s AND %s IN (e.original_payer_id, e.other_member_id)
+        JOIN expense_viewers v ON v.expense_id = s.expense_id
+        WHERE p.id = %s AND v.member_id = %s
     """, (payment_id, actor_id))
     payment = cur.fetchone()
     if payment is None:

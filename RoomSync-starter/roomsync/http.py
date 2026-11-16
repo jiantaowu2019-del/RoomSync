@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from psycopg2.extras import Json
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from . import ledger
+from . import groups, ledger
 from .auth import COOKIE, SESSION_LIFETIME, authenticate, session_token_hash, viewer
 from .config import Settings
 from .db import connect
@@ -36,10 +36,23 @@ class Credentials(Payload):
     password: Annotated[str, Field(min_length=1, max_length=256)]
 
 
+class NewGroup(Payload):
+    name: NonBlankDescription
+
+
+class Invitation(Payload):
+    username: Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_-]+$")]
+
+
 class NewExpense(Payload):
     description: NonBlankDescription
     total_minor: Money
     currency: Literal["USD"] = "USD"
+
+
+class NewGroupExpense(NewExpense):
+    participant_ids: list[Annotated[ResourceId, Field(strict=True)]]
+    remainder_policy: Literal["PAYER", "EVEN"] = "PAYER"
 
 
 class Amount(Payload):
@@ -113,8 +126,7 @@ def create_app(settings: Settings | None = None):
     @app.get("/api/session")
     def get_session(request: Request):
         with connect(settings.database_url) as db, db.cursor() as cur:
-            member = viewer(cur, request)
-            return {"viewer": member, "other_member": ledger.other_member(cur, member["id"])}
+            return {"viewer": viewer(cur, request)}
 
     @app.delete("/api/session", status_code=204)
     def logout(request: Request, response: Response):
@@ -122,6 +134,54 @@ def create_app(settings: Settings | None = None):
             with connect(settings.database_url) as db, db.cursor() as cur:
                 cur.execute("DELETE FROM sessions WHERE token_hash = %s", (session_token_hash(token),))
         response.delete_cookie(COOKIE, httponly=True, secure=settings.origin.startswith("https://"))
+
+    @app.get("/api/groups")
+    def get_groups(request: Request):
+        with connect(settings.database_url) as db, db.cursor() as cur:
+            return groups.list_groups(cur, viewer(cur, request)["id"])
+
+    @app.post("/api/groups", status_code=201)
+    def add_group(payload: NewGroup, request: Request, key: RequestKey):
+        with connect(settings.database_url) as db, db.cursor() as cur:
+            actor = viewer(cur, request)["id"]
+            return idempotent(cur, actor, key, "create-group", payload,
+                              lambda: groups.create_group(cur, actor, payload.name))
+
+    @app.get("/api/groups/{group_id}")
+    def get_group(group_id: ResourceId, request: Request):
+        with connect(settings.database_url) as db, db.cursor() as cur:
+            return groups.group_detail(cur, group_id, viewer(cur, request)["id"])
+
+    @app.post("/api/groups/{group_id}/invitations", status_code=204)
+    def add_invitation(group_id: ResourceId, payload: Invitation, request: Request):
+        with connect(settings.database_url) as db, db.cursor() as cur:
+            groups.invite(cur, group_id, viewer(cur, request)["id"], payload.username)
+
+    @app.post("/api/groups/{group_id}/join", status_code=204)
+    def join_group(group_id: ResourceId, request: Request):
+        with connect(settings.database_url) as db, db.cursor() as cur:
+            groups.join(cur, group_id, viewer(cur, request)["id"])
+
+    @app.get("/api/groups/{group_id}/expenses")
+    def get_group_expenses(group_id: ResourceId, request: Request):
+        with connect(settings.database_url) as db, db.cursor() as cur:
+            actor = viewer(cur, request)["id"]
+            groups.require_group(cur, group_id, actor)
+            return ledger.list_expenses(cur, actor, group_id)
+
+    @app.post("/api/groups/{group_id}/expenses", status_code=201)
+    def add_group_expense(group_id: ResourceId, payload: NewGroupExpense, request: Request, key: RequestKey):
+        with connect(settings.database_url) as db, db.cursor() as cur:
+            actor = viewer(cur, request)["id"]
+            groups.require_group(cur, group_id, actor)
+            payload.participant_ids.sort()
+            return idempotent(
+                cur, actor, key, f"create-group-expense:{group_id}", payload,
+                lambda: ledger.create_group_expense(
+                    cur, group_id, actor, payload.description, payload.total_minor,
+                    payload.participant_ids, payload.remainder_policy,
+                ),
+            )
 
     @app.get("/api/expenses")
     def get_expenses(request: Request):

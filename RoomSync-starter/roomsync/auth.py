@@ -6,11 +6,13 @@ from datetime import timedelta
 from fastapi import HTTPException
 from starlette.requests import Request
 
+from .config import DEMO_USERS
+
 COOKIE = "roomsync_session"
 SESSION_LIFETIME = timedelta(hours=8)
 PASSWORD_ITERATIONS = 600_000
 EXAMPLE_PASSWORDS = frozenset(
-    f"replace-with-local-{username}-password" for username in ("alex", "sam")
+    f"replace-with-local-{username}-password" for username in DEMO_USERS
 )
 
 

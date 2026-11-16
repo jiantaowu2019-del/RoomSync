@@ -28,6 +28,18 @@ The browser flow uses a mock destination, never a live payment provider. API
 tests use PostgreSQL and isolate their data. Verify the build with the frontend
 type check and run the browser test against the built page with both sessions.
 
+## Slice 2 first delivery acceptance
+
+| ID | Scenario | Expected outcome |
+| --- | --- | --- |
+| S2-01 | Four users join a group and split $120 | Each of three non-payers owes $30. Sam's report leaves $90 outstanding. His confirmation leaves $60, settles only his share, and leaves the expense OPEN. All three confirmed receipts yield $0 and SETTLED. |
+| S2-02 | Select three of four members | The fourth member sees allocations, reports, rejection reason and activity with no obligation. A different member cannot report, confirm, or reject a share. Pending invitees and outsiders cannot access private lists or records. Accepting an invitation grants access to previous group expenses without changing allocations. |
+| S2-03 | Select members manually and via Select all, then preview both remainder policies | The payer stays selected. Only active members are selectable. $120.03 uses $30.03/$30.00/$30.00/$30.00 or $30.01/$30.01/$30.01/$30.00. Saved allocations match preview. A one-cent total retains zero allocations and creates no payable shares. |
+| S2-04 | Upgrade Slice 1 records in an isolated database | Compare IDs, share balances, open and settled states, reports, decisions, and activity before and after migration. Only the original two participants have access. A pre-upgrade pending report remains confirmable. |
+| S2-05 | Retry and race full-share writes | Re-run Slice 1 duplicate, concurrency and rollback regressions. Also check that group creation and grouped expense retries reuse the same IDs and audit records. |
+
+Run the browser scenarios with four independent sessions and mock links.
+
 ## Future slice acceptance
 
 - Partial payment, when added, can confirm $10 of $30 and leaves $20 outstanding.
