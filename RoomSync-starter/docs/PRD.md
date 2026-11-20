@@ -21,7 +21,7 @@ Each row is a requirement topic. 'Confirmed' means we discussed and chose the ru
 | ID | Topic | Decision / boundary | Status | Target |
 |---|---|---|---|---|
 | R01 | Payment and settlement status | Each payable share has its own outstanding balance and settlement status. Track unpaid, payment-reported, and recipient-confirmed payments separately; an external payment-link click or payer claim does not itself settle a share. A payable share is Settled only when its remaining balance reaches zero through confirmed payments and explicitly authorized adjustments. An Expense is Settled only when every currently valid payable share is Settled. Settlement does not erase dispute or payment history. | Confirmed core; adjustment semantics open | Slice 1 |
-| R02 | Partial payments | The data model must support multiple payment records associated with a single payable share. Each confirmed payment reduces the share's remaining balance by the confirmed amount. Partial payments must never automatically mark a share as fully Settled. Slice 1 implements full-payment settlement only; partial-payment user interactions and related workflows are deferred to Slice 2. The initial data model must not assume a one-to-one relationship between payable shares and payments. | Confirmed design direction; partial-payment workflow deferred | Slice 1 data model / Slice 2 implementation |
+| R02 | Partial payments | A payable share supports sequential partial reports, with at most one pending report. Report amounts are positive integer cents no greater than the remaining balance. Reports and external-link returns leave the balance unchanged. The designated recipient confirms the exact reported amount or rejects with a reason. Each confirmed receipt reduces the remaining balance. Settled shares reject new reports. This applies to legacy and group expenses. | Confirmed for Slice 2B | Slice 2B |
 | R03 | Amount changes | Preserve original expense and each amendment; notify affected members of changes before paying where possible. Once settled or disputed, don't mutate existing financial facts in place; correction is a linked adjustment/version. | Confirmed principle; approval rules open | Slice 1 design, later refinement |
 | R04 | Multiple payers and splits | Slice 1 uses one payer and a two-person equal split. The first Slice 2 delivery supports one payer, group expenses, selected participants, and two equal-split remainder policies. Multiple original payers and additional split types remain open. | Confirmed through Slice 2 first delivery | Slice 1 / 2 |
 | R05 | Identity and authorization | Only the actual authenticated recipient can attest receipt. No participant may impersonate the other or modify another user's payment status. | Confirmed principle; auth mechanism open | Slice 1 |
@@ -47,7 +47,14 @@ Each row is a requirement topic. 'Confirmed' means we discussed and chose the ru
 - Active members can read all expenses in their group, including those posted before they joined. They can see allocations, balances, settlement status, payment reports, rejection reasons, and activity. Pending invitees and outsiders have no group ledger access. Existing two-person expenses remain private to their original participants.
 - Only the debtor reports a payment for a Payable Share. Only its designated recipient confirms or rejects it. Rejecting a report requires a reason visible to the group. Only the debtor gets the mock payment link. Reports cover the full outstanding share balance in this delivery.
 - When an equal split leaves a remainder, the payer selects a policy. The default assigns all leftover cents to the original payer. The even distribution policy assigns at most one extra cent per person, starting with the original payer and then by ascending member ID. The server calculates and saves the policy and allocations. Zero-cent allocations create no Payable Share.
-- The next Slice 2 delivery covers partial payments. Multi-expense balance aggregation is scheduled separately.
+- Slice 2B covers partial payments. Multi-expense balance aggregation is scheduled separately.
+
+### Slice 2B (approved)
+
+- Each report belongs to one expense's Payable Share. Default its amount to the full remaining balance and allow a smaller positive amount. Keep at most one pending report per share. Rejecting it preserves the original and permits a corrected report. Explain that money already sent does not need to be sent again.
+- Before opening a mock payment link, preserve the account, group, expense, share, amount and operation key. On return, read the current authorized expense state, then ask whether that exact amount was sent. Only an explicit confirmation creates a report. Later retains the draft. Each external jump prompts automatically at most once.
+- A pending report, a settled share, or an amount above the latest balance requires reviewing the current state before reporting. Returning or retrying never duplicates a receipt. A lost response uses the original request key, while a subsequent intentional payment gets a new key.
+- Existing records and pending full-payment reports remain valid. Refunds, reversals, live payment providers, disputes and multi-expense aggregation remain separate work.
 
 These are incremental releases of an integrated product, not permission to defer foundational protections needed in Slice 1.
 
@@ -60,7 +67,7 @@ These are incremental releases of an integrated product, not permission to defer
 ## 6. Things requiring an explicit product decision before associated coding
 - Whether a mutually approved waiver/adjustment may make a share settled without full cash payment, and how it is presented.
 - Who may correct settled or disputed expense and what acknowledgment is required.
-- Payment reversal, mistaken confirmation, partial-payment workflow details, and allocation of payments across multiple payable shares or expenses.
+- Payment reversal, mistaken confirmation, and allocation of payments across multiple payable shares or expenses.
 - First payment-link provider and exact validation/locale/currency behavior.
 - Stakeholder vote eligibility, vote threshold, ties, abstentions, voting timeframe, effect on balances.
 - Reminder delivery/consent, spam prevention, dispute privacy, retention and export.

@@ -17,6 +17,9 @@ export type Payment = {
   amount_minor: number;
   status: "REPORTED" | "REJECTED" | "CONFIRMED";
   reason: string | null;
+  confirmed_minor: number | null;
+  created_at: string;
+  decided_at: string | null;
 };
 export type Share = {
   id: number;
@@ -25,7 +28,11 @@ export type Share = {
   debtor: string;
   recipient: string;
   outstanding_minor: number;
-  status: "UNPAID" | "PAYMENT_REPORTED" | "SETTLED";
+  amount_minor: number;
+  confirmed_minor: number;
+  pending_minor: number;
+  payment_pending: boolean;
+  status: "UNPAID" | "PARTIALLY_SETTLED" | "PAYMENT_REPORTED" | "SETTLED";
   payment_url: string | null;
   payments: Payment[];
 };

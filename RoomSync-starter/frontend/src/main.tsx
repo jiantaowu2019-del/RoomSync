@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
-import { api, ApiError, money, submit, type Expense, type ExpenseRow, type Group, type GroupDetail, type Payment, type Session, type Share } from "./api";
+import { api, ApiError, money, submit, type Expense, type ExpenseRow, type GroupDetail, type Payment, type Session, type Share } from "./api";
 import { ExpenseForm, type ExpenseDraft } from "./ExpenseForm";
+import { GroupHome } from "./GroupHome";
+import { useAutoRefresh } from "./useAutoRefresh";
+import { PaymentReportForm } from "./PaymentReportForm";
+import { PaymentReturn } from "./PaymentReturn";
+import { reportPayment, type PaymentDraft } from "./paymentDraft";
 import "./styles.css";
-
-const REFRESH_INTERVAL_MS = 12_000;
 
 const activity: Record<string, string> = {
   EXPENSE_CREATED: "created the expense",
@@ -21,6 +24,7 @@ function badge(status: string) {
   const labels: Record<string, string> = {
     OPEN: "Open", UNPAID: "Unpaid", PAYMENT_REPORTED: "Payment reported",
     REPORTED: "Payment reported", CONFIRMED: "Receipt confirmed", REJECTED: "Rejected", SETTLED: "Settled",
+    PARTIALLY_SETTLED: "Partially settled",
   };
   return <span className={"badge " + status.toLowerCase()}>{labels[status]}</span>;
 }
@@ -59,20 +63,21 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
   </section>;
 }
 
-function Ledger({ session, onLogout }: { session: Session; onLogout: () => void }) {
-  const [groups, setGroups] = useState<Group[]>([]);
+function Ledger({ session, groupId, onLogout }: {
+  session: Session; groupId: number | null; onLogout: () => void;
+}) {
   const [group, setGroup] = useState<GroupDetail | null>(null);
+  const [available, setAvailable] = useState(false);
   const [rows, setRows] = useState<ExpenseRow[]>([]);
   const [selected, setSelected] = useState<Expense | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(true);
   const pending = useRef(new Map<string, string>());
-  const backgroundRead = useRef<AbortController | null>(null);
-  const groupId = group?.id ?? null;
   const selectedId = selected?.id;
+  const requestedExpense = Number(new URLSearchParams(window.location.search).get("expense"));
 
-  const openLedger = useCallback(async (groupId: number | null, id?: number, signal?: AbortSignal) => {
+  const openLedger = useCallback(async (id?: number, signal?: AbortSignal) => {
     const [detail, expenses] = await Promise.all([
       groupId === null ? Promise.resolve(null) : api<GroupDetail>(`/groups/${groupId}`, { signal }),
       api<ExpenseRow[]>(groupId === null ? "/expenses" : `/groups/${groupId}/expenses`, { signal }),
@@ -80,55 +85,45 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
     const nextId = id ?? expenses[0]?.id;
     const expense = nextId === undefined ? null : await api<Expense>("/expenses/" + nextId, { signal });
     if (signal?.aborted) return;
+    if (expense && expense.group_id !== groupId) throw new ApiError(404, "Expense not found in this ledger.");
     setGroup(detail);
     setRows(expenses);
     setSelected(expense);
-  }, []);
+    setAvailable(true);
+    setError("");
+  }, [groupId]);
 
-  const refreshGroups = useCallback(async (signal?: AbortSignal) => {
-    const entries = await api<Group[]>("/groups", { signal });
-    if (!signal?.aborted) setGroups(entries);
-  }, []);
-
-  async function refresh() {
-    await Promise.all([refreshGroups(), openLedger(groupId, selectedId)]);
-  }
+  const handleReadError = useCallback((error: unknown) => {
+    if (error instanceof ApiError && error.status === 401) onLogout();
+    else if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+      setAvailable(false);
+      setGroup(null);
+      setRows([]);
+      setSelected(null);
+      setError(groupId === null ? "Historical expenses are unavailable." : "This group is unavailable or you do not have access.");
+    } else setError(errorMessage(error));
+  }, [groupId, onLogout]);
 
   useEffect(() => {
-    void run(refresh);
-  }, []);
+    const initial = new AbortController();
+    openLedger(Number.isSafeInteger(requestedExpense) && requestedExpense > 0 ? requestedExpense : undefined, initial.signal)
+      .catch(error => { if (!initial.signal.aborted) handleReadError(error); })
+      .finally(() => { if (!initial.signal.aborted) setBusy(false); });
+    return () => initial.abort();
+  }, [openLedger, handleReadError, requestedExpense]);
 
-  useEffect(() => {
-    if (busy) return;
-
-    async function refreshVisibleLedger() {
-      if (document.visibilityState !== "visible" || backgroundRead.current) return;
-      const request = new AbortController();
-      backgroundRead.current = request;
-      try {
-        await Promise.all([refreshGroups(request.signal), openLedger(groupId, selectedId, request.signal)]);
-      } catch {
-        // Preserve the visible ledger and let the next foreground refresh retry.
-        request.abort();
-      } finally {
-        if (backgroundRead.current === request) backgroundRead.current = null;
-      }
+  const refresh = useCallback(async (signal?: AbortSignal) => {
+    try {
+      await openLedger(selectedId, signal);
+    } catch (error) {
+      if (!signal?.aborted) handleReadError(error);
+      throw error;
     }
-
-    const timer = window.setInterval(refreshVisibleLedger, REFRESH_INTERVAL_MS);
-    window.addEventListener("focus", refreshVisibleLedger);
-    document.addEventListener("visibilitychange", refreshVisibleLedger);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", refreshVisibleLedger);
-      document.removeEventListener("visibilitychange", refreshVisibleLedger);
-      backgroundRead.current?.abort();
-      backgroundRead.current = null;
-    };
-  }, [busy, groupId, selectedId, openLedger, refreshGroups]);
+  }, [openLedger, selectedId, handleReadError]);
+  const cancelRefresh = useAutoRefresh(refresh, !busy && available);
 
   async function run(action: () => Promise<void>) {
-    backgroundRead.current?.abort();
+    cancelRefresh();
     setBusy(true);
     setError("");
     setNotice("");
@@ -143,7 +138,6 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
       setBusy(false);
     }
   }
-
   async function write<T>(path: string, fields: object) {
     const body = JSON.stringify(fields);
     const fingerprint = path + "\n" + body;
@@ -157,18 +151,6 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
     }
   }
 
-  function addGroup(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const payload = { name: String(new FormData(form).get("name")).trim() };
-    void run(async () => {
-      const result = await write<{ id: number }>("/groups", payload);
-      await Promise.all([refreshGroups(), openLedger(result.id)]);
-      pending.current.delete("/groups\n" + JSON.stringify(payload));
-      form.reset();
-    });
-  }
-
   function invite(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!group) return;
@@ -178,13 +160,6 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
       await submit(`/groups/${group.id}/invitations`, JSON.stringify({ username }));
       form.reset();
       setNotice("Invitation saved.");
-    });
-  }
-
-  function join(groupId: number) {
-    void run(async () => {
-      await api(`/groups/${groupId}/join`, { method: "POST" });
-      await Promise.all([refreshGroups(), openLedger(groupId)]);
     });
   }
 
@@ -205,7 +180,7 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
         if (error instanceof ApiError && error.status === 422) sessionStorage.removeItem(storageKey);
         throw error;
       }
-      await openLedger(group.id, result.id);
+      await openLedger(result.id);
       sessionStorage.removeItem(storageKey);
     });
   }
@@ -213,21 +188,30 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
   async function updatePayment(path: string, fields: object) {
     await run(async () => {
       await write(path, fields);
-      await openLedger(groupId, selectedId);
+      await openLedger(selectedId);
       pending.current.delete(path + "\n" + JSON.stringify(fields));
     });
   }
 
+  async function submitReport(shareId: number, draft: PaymentDraft) {
+    if (!selected) return false;
+    return run(async () => {
+      await reportPayment(session.viewer.id, selected.id, shareId, draft);
+      await openLedger(selected.id);
+    });
+  }
+
   return <>
+    <a className="back-link" href="/">Back to groups</a>
     <div className="page-heading">
-      <div>
-        <h1>Shared expenses</h1>
+      <div className="ledger-heading">
+        <h1>{groupId === null ? "Historical expenses" : group?.name ?? (busy ? "Loading group…" : "Group unavailable")}</h1>
         <div className="group-heading">
-          <p>{group?.name ?? "Historical expenses"}</p>
           {group && <nav aria-label="Group shortcuts">
             <button type="button" className="quiet" onClick={() => focusSection("new-expense-heading")}>New expense</button>
             <button type="button" className="quiet" onClick={() => focusSection("expense-list-heading")}>View expenses</button>
           </nav>}
+          {available && <button className="quiet" disabled={busy} onClick={() => void run(() => refresh())}>Refresh</button>}
         </div>
       </div>
       <div className="account">
@@ -240,27 +224,9 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
     </div>
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
-    <div className="workspace">
+    {!available && !error && <p>Loading expenses…</p>}
+    {available && <div className="workspace">
       <aside>
-        <section className="panel">
-          <div className="row"><h2>Groups</h2>
-            <button className="quiet" disabled={busy} onClick={() => void run(refresh)}>Refresh</button>
-          </div>
-          <form onSubmit={addGroup}>
-            <label>Group name<input name="name" required maxLength={160} /></label>
-            <button disabled={busy}>Create group</button>
-          </form>
-          <nav className="group-list" aria-label="Ledgers">
-            <button className="secondary" disabled={busy} aria-current={group === null ? "page" : undefined}
-              onClick={() => void run(() => openLedger(null))}>Historical expenses</button>
-            {groups.map(entry => entry.status === "active"
-              ? <button className="secondary" key={entry.id} disabled={busy}
-                  aria-current={group?.id === entry.id ? "page" : undefined}
-                  onClick={() => void run(() => openLedger(entry.id))}>{entry.name}</button>
-              : <button className="secondary" key={entry.id} disabled={busy}
-                  onClick={() => join(entry.id)}>Accept invitation to {entry.name}</button>)}
-          </nav>
-        </section>
         {group?.creator_id === session.viewer.id && <section className="panel">
           <h2>Invite a member</h2>
           <form onSubmit={invite}>
@@ -274,7 +240,7 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
           {rows.length === 0 && <p>{busy ? "Loading expenses…" : "No expenses yet."}</p>}
           {rows.map(row => <button type="button" key={row.id} className="expense-item"
             aria-current={selected?.id === row.id ? "true" : undefined} disabled={busy}
-            onClick={() => void run(() => openLedger(groupId, row.id))}>
+            onClick={() => void run(() => openLedger(row.id))}>
             <span>{row.description}<small>Paid by {row.original_payer}</small></span>
             <span>{money(row.total_minor)}{badge(row.status)}</span>
           </button>)}
@@ -301,6 +267,7 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
           {selected.shares.length > 0 && !selected.allocations.some(allocation => allocation.member_id === session.viewer.id) &&
             <p>You have no allocation for this expense.</p>}
           {selected.shares.map(share => <ShareView key={share.id} share={share}
+            actorId={session.viewer.id} expense={selected} report={submitReport}
             payer={share.debtor_id === session.viewer.id} recipient={share.recipient_id === session.viewer.id}
             groupVisible={selected.group_id !== null} busy={busy} update={updatePayment} />)}
           <div className="activity">
@@ -312,32 +279,30 @@ function Ledger({ session, onLogout }: { session: Session; onLogout: () => void 
           </div>
         </section> : <section className="panel empty"><p>{busy ? "Loading expense details…" : "No expense selected."}</p></section>}
       </div>
-    </div>
+    </div>}
   </>;
 }
 
 type Mutate = (path: string, body: object) => Promise<void>;
 
-function ShareView({ share, payer, recipient, groupVisible, busy, update }: {
+function ShareView({ share, payer, recipient, groupVisible, busy, update, actorId, expense, report }: {
   share: Share; payer: boolean; recipient: boolean; groupVisible: boolean; busy: boolean; update: Mutate;
+  actorId: number; expense: Expense; report: (shareId: number, draft: PaymentDraft) => Promise<boolean>;
 }) {
+  const progress = share.outstanding_minor === 0 ? "SETTLED" : share.confirmed_minor > 0 ? "PARTIALLY_SETTLED" : "UNPAID";
   return <section className="share" aria-label={`${share.debtor}'s share`}>
-    <div className="row"><h3>{share.debtor} → {share.recipient}</h3>{badge(share.status)}</div>
+    <div className="row"><h3>{share.debtor} → {share.recipient}</h3>{badge(progress)}</div>
+    {share.payment_pending && badge("PAYMENT_REPORTED")}
+    <p>Original share: {money(share.amount_minor)} · Confirmed: {money(share.confirmed_minor)}</p>
+    {share.payment_pending && <p>Awaiting confirmation: {money(share.pending_minor)}</p>}
     <p>Remaining: {money(share.outstanding_minor)}</p>
-    {payer && share.status === "UNPAID" && <>
-      <p>Make payment outside RoomSync. The balance changes after {share.recipient} confirms receipt.</p>
-      <div className="actions">
-        {share.payment_url
-          ? <a className="secondary" href={share.payment_url} target="_blank" rel="noopener noreferrer">Open external payment link</a>
-          : <span className="muted">No payment link is configured.</span>}
-        <button disabled={busy}
-          onClick={() => void update(`/shares/${share.id}/payments`, { amount_minor: share.outstanding_minor })}>
-          Report {money(share.outstanding_minor)} paid
-        </button>
-      </div>
-    </>}
+    {payer && <PaymentReportForm key={`${share.id}:${share.outstanding_minor}:${share.payment_pending}`}
+      actorId={actorId} expense={expense} share={share} busy={busy} report={report} />}
     {share.payments.map(payment => <div className="payment" key={payment.id}>
       <div className="row"><strong>{money(payment.amount_minor)} report</strong>{badge(payment.status)}</div>
+      <p>Reported <time dateTime={payment.created_at}>{new Date(payment.created_at).toLocaleString()}</time></p>
+      {payment.confirmed_minor !== null && <p>Confirmed receipt: {money(payment.confirmed_minor)}</p>}
+      {payment.decided_at && <p>Decided <time dateTime={payment.decided_at}>{new Date(payment.decided_at).toLocaleString()}</time></p>}
       {payment.reason && <p>Reason: {payment.reason}</p>}
       {payment.status === "REPORTED" && (recipient
         ? <Decide payment={payment} groupVisible={groupVisible} busy={busy} update={update} />
@@ -376,6 +341,11 @@ function Decide({ payment, groupVisible, busy, update }: {
 function App() {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [error, setError] = useState("");
+  const logout = useCallback(() => setSession(null), []);
+  const path = window.location.pathname;
+  const groupMatch = /^\/groups\/([1-9][0-9]*)\/?$/.exec(path);
+  const groupId = groupMatch ? Number(groupMatch[1]) : null;
+  const isGroup = groupId !== null && Number.isSafeInteger(groupId);
   useEffect(() => {
     api<Session>("/session").then(setSession).catch(error => {
       if (!(error instanceof ApiError && error.status === 401)) setError(errorMessage(error));
@@ -387,8 +357,13 @@ function App() {
     <main>
       {error && <p className="error" role="alert">{error}</p>}
       {session === undefined ? <p>Loading RoomSync…</p> : session
-        ? <Ledger session={session} onLogout={() => setSession(null)} />
+        ? path === "/"
+          ? <GroupHome session={session} onLogout={logout} />
+          : isGroup || path === "/history"
+            ? <Ledger session={session} groupId={groupId} onLogout={logout} />
+            : <><h1>Page not found</h1><a className="back-link" href="/">Back to groups</a></>
         : <Login onLogin={next => { setError(""); setSession(next); }} />}
+      {session && <PaymentReturn key={session.viewer.id} actorId={session.viewer.id} />}
     </main>
   </>;
 }

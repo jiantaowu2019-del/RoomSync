@@ -139,7 +139,7 @@ def expense_detail(cur, expense_id, actor_id, links):
         share["status"] = share_status(share)
         share["payment_url"] = (
             links.recipients.get(recipient)
-            if actor_id == share["debtor_id"] and share["status"] == "UNPAID" else None
+            if actor_id == share["debtor_id"] and share["outstanding_minor"] > 0 and not share["payment_pending"] else None
         )
         cur.execute("""
             SELECT p.id, p.amount_minor, p.reported_by, p.created_at,
@@ -149,6 +149,8 @@ def expense_detail(cur, expense_id, actor_id, links):
             WHERE p.share_id = %s ORDER BY p.id DESC
         """, (share["id"],))
         share["payments"] = cur.fetchall()
+        share["confirmed_minor"] = share["amount_minor"] - share["outstanding_minor"]
+        share["pending_minor"] = sum(p["amount_minor"] for p in share["payments"] if p["status"] == "REPORTED")
     expense["shares"] = shares
     expense["outstanding_minor"] = sum(share["outstanding_minor"] for share in shares)
     expense["status"] = "OPEN" if any(share["outstanding_minor"] for share in shares) else "SETTLED"
@@ -164,7 +166,9 @@ def expense_detail(cur, expense_id, actor_id, links):
 def share_status(share):
     if not share["outstanding_minor"]:
         return "SETTLED"
-    return "PAYMENT_REPORTED" if share["payment_pending"] else "UNPAID"
+    if share["payment_pending"]:
+        return "PAYMENT_REPORTED"
+    return "PARTIALLY_SETTLED" if share["outstanding_minor"] < share["amount_minor"] else "UNPAID"
 
 
 def authorize_share(cur, share_id, actor_id):
@@ -206,8 +210,8 @@ def report_payment(cur, share, actor_id, amount_minor):
     balance = locked_balance(cur, share["id"])
     if not balance["outstanding_minor"] or balance["payment_pending"]:
         raise HTTPException(409, "This share is settled or already has a pending report.")
-    if amount_minor != balance["outstanding_minor"]:
-        raise HTTPException(422, "Report the full outstanding amount.")
+    if amount_minor <= 0 or amount_minor > balance["outstanding_minor"]:
+        raise HTTPException(422, "Report a positive amount no greater than the outstanding balance.")
     cur.execute("""
         INSERT INTO payments (share_id, reported_by, amount_minor)
         VALUES (%s, %s, %s) RETURNING id
@@ -225,8 +229,8 @@ def decide_payment(cur, payment, actor_id, *, amount_minor=None, reason=None):
         raise HTTPException(409, "This payment report already has a decision.")
 
     if reason is None:
-        if amount_minor != payment["amount_minor"] or amount_minor != balance["outstanding_minor"]:
-            raise HTTPException(422, "Confirmation must match the report and outstanding balance.")
+        if amount_minor != payment["amount_minor"] or amount_minor > balance["outstanding_minor"]:
+            raise HTTPException(422, "Confirmation must match the report and fit the outstanding balance.")
         kind = "CONFIRMED"
         details = {"amount_minor": amount_minor}
     else:

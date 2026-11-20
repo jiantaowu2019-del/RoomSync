@@ -166,6 +166,20 @@ def test_group_creator_can_act_only_on_their_own_share(accounts):
     assert confirm(sam, payment_id).status_code == 200
 
 
+def test_direct_page_routes_serve_only_the_app_shell(accounts):
+    alex, sam = accounts["alex"], accounts["sam"]
+    group_id = group(accounts, "Server route", ())
+    for path in ("/", "/history", f"/groups/{group_id}"):
+        response = sam.get(path)
+        assert response.status_code == 200
+        assert "<title>RoomSync</title>" in response.text
+        assert "Server route" not in response.text
+    assert sam.get(f"/api/groups/{group_id}").status_code == 404
+    assert sam.get(f"/api/groups/{group_id}/expenses").status_code == 404
+    assert sam.get("/api/not-a-route").status_code == 404
+    assert sam.get("/api/not-a-route").headers["content-type"] == "application/json"
+
+
 @pytest.mark.parametrize(("total", "policy", "expected"), [
     (12003, "PAYER", [3003, 3000, 3000, 3000]),
     (12003, "EVEN", [3001, 3001, 3001, 3000]),
@@ -303,3 +317,13 @@ def test_migrate_real_slice_one_schema_and_confirm_pending_record():
             assert confirm(casey, pending["payment"]).status_code == 404
             assert confirm(alex, pending["payment"]).status_code == 200
             assert detail(sam, pending["expense"])["status"] == "SETTLED"
+            old_unpaid = detail(sam, records["unpaid"]["expense"])
+            old_share = old_unpaid["shares"][0]
+            partial = report(sam, old_share["id"], 1000)
+            assert partial.status_code == 201
+            assert confirm(alex, partial.json()["id"], 1000).status_code == 200
+            migrated = detail(sam, records["unpaid"]["expense"])
+            assert migrated["id"] == records["unpaid"]["expense"]
+            assert migrated["shares"][0]["confirmed_minor"] == 1000
+            assert migrated["outstanding_minor"] == 2000
+            assert migrated["shares"][0]["status"] == "PARTIALLY_SETTLED"

@@ -280,7 +280,7 @@ def test_invalid_amounts_leave_ledger_intact(accounts):
     before = detail(sam, expense_id)
     share_id = before["shares"][0]["id"]
     path = f"/api/shares/{share_id}/payments"
-    for amount in (0, -1, 3.5, 1000, 3001, "3000", True):
+    for amount in (0, -1, 3.5, 3001, "3000", True):
         assert write(sam, path, {"amount_minor": amount}).status_code == 422
     assert write(sam, path, {**AMOUNT, "currency": "CAD"}).status_code == 422
     assert detail(sam, expense_id) == before

@@ -1,6 +1,9 @@
-# RoomSync — Slice 1 baseline and Slice 2 first delivery
+# RoomSync — Slice 1 baseline and Slice 2A/2B
 
 Approved scope recorded in the owner’s Design Review. The PRD remains the product baseline.
+
+The Slice 1 sections preserve the original baseline; the Slice 2B section below
+supersedes its full-balance-only report restriction for all unsettled shares.
 
 ## Slice 1 workflow and storage
 
@@ -139,9 +142,71 @@ payment permissions as every other member. The rejection form says that group
 members can read the reason. Share-level row locks and idempotency rules still
 apply. Expense remains OPEN while any share has an outstanding balance.
 
+## Page navigation
+
+The home address `/` shows the group list, group creation, pending invitations,
+and the Historical expenses link. Creating a group or accepting an invitation
+opens `/groups/<groupId>`. That page owns the group title, invitations, expense
+form, expense list, and details. Its Back to groups link opens the home page.
+Historical expenses use `/history` and the existing private two-person APIs.
+
+These are same-origin document links served by the FastAPI application shell.
+Reloading or following a saved group address selects the group from the path.
+Login retains that path. Browser back and forward use the browser's history.
+Each page loads its own data. A group page reads and writes only its path's
+group, and checks that a selected expense belongs to that ledger before display.
+The server remains responsible for membership and payment authorization.
+Unavailable group pages display a generic message and a link to the group list.
+The shell contains no private group data.
+
+Home and ledger pages reuse the foreground refresh behavior, including the
+12-second interval, focus and visibility changes, and page restoration. The
+group form stays mounted during background refresh. Navigating to another
+document creates fresh page state. Long group titles wrap above the shortcuts,
+and mobile account controls use a separate row.
+
+Partial payment can extend the existing share controls inside the group page.
+Dispute views can likewise attach to a selected expense. A future reminder can
+extend the group URL with an expense ID, validating both membership and the
+expense's group before displaying it. Reminder delivery and consent remain in
+Slice 4. Slice 5 must define and implement former-member historical access
+before exit links are enabled. A saved URL alone never grants historical access.
+
+## Slice 2B
+
+The existing financial tables and share balance view support multiple receipts.
+No historical rewrite or schema migration is needed. Report creation accepts
+positive integer cents up to the current outstanding balance while holding the
+share lock, and rejects a second pending report. Confirmation must equal the
+report and must fit the current balance. Decisions, audit events and idempotency
+results commit together using the existing routes.
+
+Share responses add confirmed and pending totals. Settlement progress is
+UNPAID, PARTIALLY_SETTLED or SETTLED. The existing PAYMENT_REPORTED status keeps
+its pending meaning; the UI also shows partial progress when appropriate.
+Only the debtor has a payment entry form and mock payment link. History shows
+each report's amount, time, receipt amount or rejection reason.
+
+Tab session storage scopes payment drafts to the account, expense and share.
+It retains an operation key during an uncertain response, including reloads.
+An unresolved submission is retried with that key before starting another
+payment. Once the response is known to have succeeded, clear the operation so
+a later intentional payment of the same amount gets a different key.
+
+Opening a mock link records an immutable snapshot for that jump. A foreground
+return reads the original expense before displaying a modal. Mark the jump as
+prompted before showing it. The modal identifies the original expense and
+recipient, preserves the selected amount, and offers Report or Later.
+Pending, settled, unauthorized or excessive-amount drafts cannot create a new
+report from the modal. A failed read leaves the jump available for retry.
+The original ledger is addressed by /groups/<id>?expense=<id>, or by
+/history?expense=<id> for private two-person expenses. The ledger validates the
+expense's scope before display. No provider callback or link return attests
+that money moved. Rejections explain that already-sent money need not be sent
+again.
+
 ## Deferred
 
 T10's full correction workflow, amendments, cancellation, confirmed payment
-reversal, partial payment UI and operations, disputes, voting, reminders, and
-multi-expense balance aggregation, and additional split types remain outside
-the first Slice 2 delivery.
+reversal, disputes, voting, reminders, multi-expense balance aggregation, and
+additional split types remain outside Slice 2B.

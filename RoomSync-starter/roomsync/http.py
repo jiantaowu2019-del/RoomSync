@@ -230,6 +230,8 @@ def create_app(settings: Settings | None = None):
         app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 
     @app.get("/", include_in_schema=False)
+    @app.get("/history", include_in_schema=False)
+    @app.get("/groups/{group_id}", include_in_schema=False)
     def home():
         index = DIST / "index.html"
         if not index.is_file():

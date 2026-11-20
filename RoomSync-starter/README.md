@@ -67,6 +67,11 @@ its new logins are blocked pending an authorized credential correction.
 
 ## Manual acceptance for Slice 2
 
+The home page lists groups and invitations. Clicking a group opens its own
+`/groups/<groupId>` address. Refreshing that page stays in the group.
+Use **Back to groups** or browser back to return to the list.
+**Historical expenses** opens `/history`.
+
 1. As Alex, use **Create group**, then invite `sam`, `casey`, and `jordan`.
    Accept in the other three profiles. In Alex's profile, the active roster
    updates when returning to the page or within one 12-second refresh cycle
@@ -96,6 +101,11 @@ its new logins are blocked pending an authorized credential correction.
    survive the automatic update. On a 390 × 844 mobile viewport, use
    **New expense** and **View expenses** next to the group name and check
    that each shortcut scrolls to and focuses its section heading.
+9. From the home list, open one group, reload it, return to the list, and open
+   another. Check the title, expense list and invitations belong to that group.
+   In a non-member's browser, directly open its group address and check the
+   unavailable message and return link. Repeat at 390 × 844 with a long group
+   name to verify the title, return link and group shortcuts wrap clearly.
 
 The mock payment link is optional for manual acceptance. Opening it or
 returning leaves the balance unchanged. The automated browser test intercepts
@@ -117,6 +127,35 @@ the reserved mock host with a synthetic destination.
    $0 balance, Settled status, and previous rejection in the history.
 5. A pre-existing $0.01 expense remains Settled with no Payable Share.
    A pre-existing $60.01 expense has a $30 original Payable Share.
+
+## Manual acceptance for Slice 2B
+
+Use two independent browser sessions as Alex and Sam, with a four-member $120
+expense paid by Alex. Each other member owes $30. Existing unsettled two-person
+expenses also accept the same partial-payment workflow.
+
+1. As Sam, change **Payment amount (USD)** from $30.00 to $10.00 and report it.
+   The share remains $30 outstanding and the expense remains $90 outstanding.
+   Alex confirms the $10 report. Sam's share is Partially settled, with $10
+   confirmed and $20 remaining. The expense has $80 outstanding.
+2. Sam reports $5, which Alex rejects with a reason. The remaining share stays
+   $20. Read the rejection and re-report the actual amount already transferred.
+   Previously transferred money does not need to be transferred again.
+   Confirming the remaining $20 settles Sam's share while other unpaid members
+   leave the expense Open with $60 outstanding.
+3. On an unpaid share, choose $10 and use **Go to payment**. Return to RoomSync
+   and check the original expense, recipient and amount in the confirmation
+   dialog. **Continue later** keeps the draft and creates no report.
+   **Transferred, report $10.00** explicitly reports the selected amount.
+   The same jump prompts automatically only once. Use the direct Report button
+   later if the money has already been transferred.
+
+The reserved mock link may show a browser connection error during manual use.
+Return to RoomSync to test the handoff. Automated tests intercept that URL with
+a mock page. If the share changed, the return dialog shows its latest pending,
+settled or reduced-balance state and requires reviewing the original expense.
+If a report's response was lost, **Retry report** recovers the original result.
+Once a report succeeds, a later intentional payment uses its own operation key.
 
 ## Run automated tests
 

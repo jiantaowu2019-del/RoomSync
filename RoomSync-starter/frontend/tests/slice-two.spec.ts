@@ -74,7 +74,7 @@ test("four members settle the expense one share at a time", async ({ browser }) 
     ] as const) {
       await openExpense(debtor, description);
       const totalBeforeReport = await alex.locator(".balance strong").innerText();
-      await expect(share(debtor, name).getByRole("link", { name: "Open external payment link" }))
+      await expect(share(debtor, name).getByRole("link", { name: "Go to payment" }))
         .toHaveAttribute("href", "https://pay.example.test/u/alex");
       await share(debtor, name).getByRole("button", { name: "Report $30.00 paid" }).click();
       await expect(share(debtor, name)).toContainText("Payment reported");
@@ -135,7 +135,7 @@ test("preview matches saved allocations and observers see rejection activity", a
     await expect(jordan.getByText("You have no allocation for this expense.")).toBeVisible();
     await expect(share(jordan, "Sam")).toContainText("Payment reported");
     await expect(jordan.getByRole("button", { name: /Confirm|Reject report|Report .* paid/ })).toHaveCount(0);
-    await expect(jordan.getByRole("link", { name: "Open external payment link" })).toHaveCount(0);
+    await expect(jordan.getByRole("link", { name: "Go to payment" })).toHaveCount(0);
     await openExpense(alex, "Three-person dinner");
     await share(alex, "Sam").getByRole("button", { name: "Reject report" }).click();
     await expect(alex.getByText("Visible to group members.")).toBeVisible();
@@ -184,7 +184,7 @@ test("retrying a committed group expense after a reload reuses its request key",
     await submitExpense();
     await expect(alex.getByRole("alert")).toContainText("Unable to reach RoomSync");
     await alex.reload();
-    await alex.getByRole("button", { name: group, exact: true }).click();
+    await expect(alex.getByRole("heading", { name: group, exact: true })).toBeVisible();
     const rows = alex.getByRole("button", { name: new RegExp(description) });
     await expect(rows).toHaveCount(1);
     await submitExpense();
@@ -337,6 +337,152 @@ test("group shortcuts scroll and focus the correct mobile sections", async ({ br
     const listHeading = alex.getByRole("heading", { name: "Group expenses", exact: true });
     await expect(listHeading).toBeFocused();
     await expect(listHeading).toBeInViewport();
+  } finally {
+    await alex.context().close();
+  }
+});
+
+test("group addresses support reload, back navigation and isolated group actions", async ({ browser }) => {
+  const [alex, sam] = await Promise.all(["alex", "sam"].map(name => signIn(browser, name)));
+  try {
+    await setupGroup(alex, "sss", ["sam"]);
+    const firstUrl = alex.url();
+    await expect(alex).toHaveURL(/\/groups\/[1-9][0-9]*$/);
+    await accept(sam, "sss");
+    await alex.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(alex.getByRole("checkbox", { name: "Sam", exact: true })).toBeVisible();
+    await fillExpense(alex, "Only sss expense", "60.00");
+    await alex.getByRole("checkbox", { name: "Sam", exact: true }).check();
+    await alex.getByRole("button", { name: "Add expense", exact: true }).click();
+    await expect(alex.getByRole("heading", { name: "Only sss expense", exact: true })).toBeVisible();
+    await alex.getByRole("link", { name: "Back to groups" }).click();
+    await expect(alex).toHaveURL(new URL("/", firstUrl).toString());
+    await expect(alex.getByRole("heading", { name: "New expense", exact: true })).toHaveCount(0);
+    await expect(alex.getByLabel("Invite username")).toHaveCount(0);
+
+    await setupGroup(alex, "ss", ["sam"]);
+    const secondUrl = alex.url();
+    expect(secondUrl).not.toBe(firstUrl);
+    await sam.getByRole("link", { name: "Back to groups" }).click();
+    await accept(sam, "ss");
+    await alex.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(alex.getByRole("checkbox", { name: "Sam", exact: true })).toBeVisible();
+    await fillExpense(alex, "Only ss expense", "40.00");
+    await alex.getByRole("checkbox", { name: "Sam", exact: true }).check();
+    await alex.getByRole("button", { name: "Add expense", exact: true }).click();
+    await expect(alex.getByRole("heading", { name: "Only ss expense", exact: true })).toBeVisible();
+
+    await alex.getByRole("link", { name: "Back to groups" }).click();
+    await alex.getByRole("link", { name: "sss", exact: true }).click();
+    await expect(alex).toHaveURL(firstUrl);
+    await expect(alex.getByRole("heading", { name: "sss", exact: true })).toBeVisible();
+    await expect(alex.getByRole("heading", { name: "Only sss expense", exact: true })).toBeVisible();
+    await expect(alex.getByText("Only ss expense", { exact: true })).toHaveCount(0);
+    await alex.reload();
+    await expect(alex).toHaveURL(firstUrl);
+    await expect(alex.getByRole("heading", { name: "sss", exact: true })).toBeVisible();
+    await expect(alex.getByRole("heading", { name: "Only sss expense", exact: true })).toBeVisible();
+
+    await alex.goBack();
+    await expect(alex.getByRole("heading", { name: "Shared expenses", exact: true })).toBeVisible();
+    await alex.getByRole("link", { name: "ss", exact: true }).click();
+    await expect(alex).toHaveURL(secondUrl);
+    await expect(alex.getByRole("heading", { name: "Only ss expense", exact: true })).toBeVisible();
+    await expect(alex.getByText("Only sss expense", { exact: true })).toHaveCount(0);
+    await alex.getByLabel("Invite username").fill("casey");
+    const invitation = alex.waitForResponse(response =>
+      response.url() === new URL("/api" + new URL(secondUrl).pathname + "/invitations", secondUrl).toString()
+      && response.request().method() === "POST");
+    await alex.getByRole("button", { name: "Send invitation", exact: true }).click();
+    expect((await invitation).status()).toBe(204);
+
+    const casey = await signIn(browser, "casey");
+    try {
+      await expect(casey.getByRole("button", { name: "Accept invitation to ss", exact: true })).toBeVisible();
+      await expect(casey.getByRole("button", { name: "Accept invitation to sss", exact: true })).toHaveCount(0);
+    } finally {
+      await casey.context().close();
+    }
+
+    await fillExpense(alex, "Second ss expense", "10.00");
+    await alex.getByRole("checkbox", { name: "Sam", exact: true }).check();
+    const posting = alex.waitForResponse(response =>
+      response.url() === new URL("/api" + new URL(secondUrl).pathname + "/expenses", secondUrl).toString()
+      && response.request().method() === "POST");
+    await alex.getByRole("button", { name: "Add expense", exact: true }).click();
+    expect((await posting).status()).toBe(201);
+    await expect(alex.getByRole("heading", { name: "Second ss expense", exact: true })).toBeVisible();
+
+    await sam.goto(firstUrl);
+    await expect(sam.getByRole("heading", { name: "Only sss expense", exact: true })).toBeVisible();
+    await expect(sam.getByText("Second ss expense", { exact: true })).toHaveCount(0);
+    await sam.goto(secondUrl);
+    await expect(sam.getByRole("heading", { name: "Second ss expense", exact: true })).toBeVisible();
+  } finally {
+    await Promise.all([alex, sam].map(page => page.context().close()));
+  }
+});
+
+test("outsiders and pending invitees cannot read direct group pages", async ({ browser }) => {
+  const [alex, sam, jordan] = await Promise.all(["alex", "sam", "jordan"].map(name => signIn(browser, name)));
+  try {
+    await setupGroup(alex, "Private direct group", ["sam"]);
+    const groupUrl = alex.url();
+    for (const visitor of [sam, jordan]) {
+      const response = await visitor.goto(groupUrl);
+      expect(response?.status()).toBe(200);
+      await expect(visitor.getByRole("alert")).toContainText("This group is unavailable or you do not have access.");
+      await expect(visitor.getByRole("heading", { name: "Private direct group", exact: true })).toHaveCount(0);
+      await expect(visitor.getByLabel("Description")).toHaveCount(0);
+      await expect(visitor.getByRole("heading", { name: "Activity", exact: true })).toHaveCount(0);
+      await visitor.reload();
+      await expect(visitor.getByRole("alert")).toContainText("This group is unavailable");
+      await visitor.getByRole("link", { name: "Back to groups" }).click();
+      await expect(visitor.getByRole("heading", { name: "Shared expenses", exact: true })).toBeVisible();
+    }
+    await sam.getByRole("button", { name: "Accept invitation to Private direct group" }).click();
+    await expect(sam).toHaveURL(groupUrl);
+    await expect(sam.getByRole("heading", { name: "Private direct group", exact: true })).toBeVisible();
+
+    await jordan.getByRole("button", { name: "Sign out", exact: true }).click();
+    await jordan.goto(groupUrl);
+    await expect(jordan.getByRole("heading", { name: "Sign in to RoomSync" })).toBeVisible();
+    await jordan.getByLabel("Username").fill("sam");
+    await jordan.getByLabel("Password").fill("demo-sam-test-123");
+    await jordan.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(jordan).toHaveURL(groupUrl);
+    await expect(jordan.getByRole("heading", { name: "Private direct group", exact: true })).toBeVisible();
+  } finally {
+    await Promise.all([alex, sam, jordan].map(page => page.context().close()));
+  }
+});
+
+test("long group titles wrap with their shortcuts on desktop and mobile", async ({ browser }) => {
+  const alex = await signIn(browser, "alex");
+  try {
+    const name = "Roommates " + "VeryLongGroupName".repeat(8);
+    await setupGroup(alex, name, []);
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+      await alex.setViewportSize(viewport);
+      await alex.evaluate(() => scrollTo(0, 0));
+      const title = alex.getByRole("heading", { name, exact: true });
+      const shortcuts = alex.getByRole("navigation", { name: "Group shortcuts" });
+      const back = alex.getByRole("link", { name: "Back to groups" });
+      await expect(title).toBeVisible();
+      await expect(back).toBeInViewport();
+      const titleBox = await title.boundingBox();
+      const shortcutsBox = await shortcuts.boundingBox();
+      const backBox = await back.boundingBox();
+      expect(titleBox).not.toBeNull();
+      expect(shortcutsBox!.y).toBeGreaterThanOrEqual(titleBox!.y + titleBox!.height);
+      expect(titleBox!.y).toBeGreaterThanOrEqual(backBox!.y + backBox!.height);
+      expect(await alex.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      for (const [button, heading] of [["New expense", "New expense"], ["View expenses", "Group expenses"]]) {
+        await shortcuts.getByRole("button", { name: button, exact: true }).click();
+        await expect(alex.getByRole("heading", { name: heading, exact: true })).toBeFocused();
+        await expect(alex.getByRole("heading", { name: heading, exact: true })).toBeInViewport();
+      }
+    }
   } finally {
     await alex.context().close();
   }

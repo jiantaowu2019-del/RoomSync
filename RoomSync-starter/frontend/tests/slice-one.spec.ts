@@ -23,20 +23,25 @@ test("two members settle an expense after rejecting an incorrect report", async 
       headers: { Origin: origin, "Idempotency-Key": "legacy-browser-fixture" },
     });
     expect(created.status()).toBe(201);
-    await alex.getByRole("button", { name: "Refresh" }).click();
+    await alex.getByRole("link", { name: "Historical expenses", exact: true }).click();
+    await expect(alex).toHaveURL(/\/history$/);
     await expect(alex.getByRole("heading", { name: "Groceries" })).toBeVisible();
-    await expect(alex.getByRole("link", { name: "Open external payment link" })).toHaveCount(0);
-    await sam.getByRole("button", { name: "Refresh" }).click();
+    await expect(alex.getByRole("link", { name: "Go to payment" })).toHaveCount(0);
+    await sam.getByRole("link", { name: "Historical expenses", exact: true }).click();
     await expect(sam.locator(".balance")).toContainText("$30.00");
 
     await samContext.route("https://pay.example.test/u/alex", route =>
       route.fulfill({ contentType: "text/html", body: "<h1>Mock payment destination</h1>" }));
     const [popup] = await Promise.all([
       samContext.waitForEvent("page"),
-      sam.getByRole("link", { name: "Open external payment link" }).click(),
+      sam.getByRole("link", { name: "Go to payment" }).click(),
     ]);
     await expect(popup.getByRole("heading", { name: "Mock payment destination" })).toBeVisible();
     await popup.close();
+    await sam.bringToFront();
+    await sam.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(sam.getByRole("dialog")).toBeVisible();
+    await sam.getByRole("button", { name: "Continue later", exact: true }).click();
     await sam.reload();
     await expect(sam.locator(".balance")).toContainText("$30.00");
     await expect(sam.getByText("Payment reported", { exact: true })).toHaveCount(0);
@@ -44,7 +49,7 @@ test("two members settle an expense after rejecting an incorrect report", async 
     await sam.getByRole("button", { name: "Report $30.00 paid" }).click();
     await expect(sam.getByText("Waiting for Alex to confirm receipt.")).toBeVisible();
     await expect(sam.locator(".balance")).toContainText("$30.00");
-    await expect(sam.getByRole("link", { name: "Open external payment link" })).toHaveCount(0);
+    await expect(sam.getByRole("link", { name: "Go to payment" })).toHaveCount(0);
     await expect(sam.getByText("Make payment outside RoomSync.", { exact: false })).toHaveCount(0);
     await expect(sam.getByRole("button", { name: "Confirm $30.00 received" })).toHaveCount(0);
 
@@ -56,7 +61,7 @@ test("two members settle an expense after rejecting an incorrect report", async 
     await expect(alex.locator(".balance")).toContainText("$30.00");
 
     await sam.getByRole("button", { name: "Refresh" }).click();
-    await expect(sam.getByRole("link", { name: "Open external payment link" })).toHaveAttribute("href", "https://pay.example.test/u/alex");
+    await expect(sam.getByRole("link", { name: "Go to payment" })).toHaveAttribute("href", "https://pay.example.test/u/alex");
     await sam.getByRole("button", { name: "Report $30.00 paid" }).click();
     await expect(sam.getByText("Waiting for Alex to confirm receipt.")).toBeVisible();
     await alex.getByRole("button", { name: "Refresh" }).click();
@@ -67,7 +72,7 @@ test("two members settle an expense after rejecting an incorrect report", async 
     await expect(sam.locator(".detail .title")).toContainText("Settled");
     await expect(sam.locator(".balance")).toContainText("$0.00");
     await expect(sam.getByText("Reason: Incorrect payment reference")).toBeVisible();
-    await expect(sam.getByRole("link", { name: "Open external payment link" })).toHaveCount(0);
+    await expect(sam.getByRole("link", { name: "Go to payment" })).toHaveCount(0);
   } finally {
     await Promise.all([alexContext.close(), samContext.close()]);
   }
