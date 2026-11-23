@@ -1,4 +1,4 @@
-# RoomSync — Slice 1 baseline and Slice 2A/2B
+# RoomSync — Slice 1 baseline, Slice 2A/2B and Slice 3A
 
 Approved scope recorded in the owner’s Design Review. The PRD remains the product baseline.
 
@@ -159,6 +159,13 @@ The server remains responsible for membership and payment authorization.
 Unavailable group pages display a generic message and a link to the group list.
 The shell contains no private group data.
 
+After an authorized detail read, the ledger synchronizes the selected expense
+ID to the query string with history.replaceState. The initial query is captured
+once per document so this synchronization does not restart initial loading.
+Selecting or creating an expense and then reloading stays on that exact ID,
+including when several expenses have the same description. Replacing the
+current history entry preserves Back to groups/browser-back behavior.
+
 Home and ledger pages reuse the foreground refresh behavior, including the
 12-second interval, focus and visibility changes, and page restoration. The
 group form stays mounted during background refresh. Navigating to another
@@ -205,8 +212,89 @@ expense's scope before display. No provider callback or link return attests
 that money moved. Rejections explain that already-sent money need not be sent
 again.
 
+## Slice 3A: share disputes and responses
+
+Migration 003 adds `disputes` and `dispute_responses`, preserving all earlier
+financial facts and views. A unique share ID allows one thread per Payable Share.
+The immutable opening records author, positive claimed cents, reason, timestamp
+and the current outstanding balance under the Share lock. Responses are
+immutable additions with an author and timestamp. Thread status is always OPEN
+in 3A; no closure or disputed-coverage calculation is implemented.
+
+The debtor opens a thread. Only that debtor and the designated recipient may
+respond, including after financial settlement. Every write first checks Session,
+Origin and expense visibility/role, then replays an existing idempotency result.
+Only a new operation checks business state. A new opening uses
+`ledger.locked_balance`, rejects a settled share or duplicate thread, and checks
+the amount against the latest balance. A pending payment report does not stop
+creation or reduce this balance. The statement, audit event and idempotency
+response commit together. Unsupported edits, deletion and closure have no API.
+
+| Route | Operation |
+| --- | --- |
+| POST /api/shares/{id}/disputes | Open as the debtor with amount_minor and reason. |
+| POST /api/disputes/{id}/responses | Append a body as the debtor or recipient. |
+| GET /api/expenses/{id} | Include each share's thread and ordered responses. |
+
+Both POSTs require Idempotency-Key. Same-key retries return the original result;
+conflicting reuse is 409. A different key cannot open a second thread. Each
+intentional response gets a new key even if its text matches an earlier response.
+Statement drafts and uncertain keys are scoped to the account and resource in
+tab session storage. Confirmed success clears the draft before the next read;
+uncertain results retain the exact operation for retry after reload. Background
+refresh retains unsent statement text and amount.
+
+All existing expense viewers can read the full thread and its related Activity.
+The form warns that active group members can see the full text. Legacy two-person
+expenses retain their original two-person visibility. Responses use separate
+role checks; a group creator or an uninvolved observer cannot respond for others.
+Text is rendered as plain text. Reason and response limits are 1-2000 trimmed
+characters, with NUL rejected.
+
+### Query walkthrough: separate financial aggregation from discussion
+
+1. `http.get_expense` opens the existing REPEATABLE READ READ ONLY transaction.
+2. `ledger.expense_detail` checks `expense_viewers`, reads `share_balances`, and
+   derives confirmed totals and financial status exactly as before.
+3. `disputes.attach_threads` batch-reads disputes for the authorized Share IDs,
+   then responses for the resulting Dispute IDs. It uses `shares_by_id` and
+   `threads_by_id` to attach data without changing financial fields. This is at
+   most two extra queries regardless of the number of shares or responses.
+4. `ShareView` and `DisputePanel` display the financial totals and opening claim
+   separately. No discussion row participates in a payment SUM.
+
+For one confirmed receipt of 1000 cents and two responses, a direct join of
+payments -> payment_decisions -> disputes -> dispute_responses produces two
+rows containing that same receipt. Summing after that join yields 2000 cents,
+incorrectly showing only 1000 of an original 3000 cents remaining. The existing
+balance view correctly returns 1000 confirmed and 2000 remaining; the separate
+batch read attaches both responses without multiplying that receipt.
+SUM(DISTINCT amount) is not a fix: two independent 1000-cent receipts must both
+count. The API regression `test_two_responses_do_not_multiply_receipts_and_claim_never_changes`
+and the browser walkthrough cover the correct result.
+
+A $5 dispute submitted concurrently with an $18 confirmation against a $20
+balance follows lock order. Opening first saves a $20 snapshot and a $5 claim;
+the receipt then leaves $2. Receipt first leaves $2 and the new $5 claim is
+rejected. Neither result overwrites an original claim. Financial settlement
+does not close an existing thread.
+
+Browser regression also covers a four-member expense paid by Sam: Alex owes
+$25, claims $5, and Sam confirms $18 then $7. After the last receipt and a full
+reload in both sessions, Alex's share is Settled while the expense stays Open
+with Casey and Jordan each owing $25. The original thread and all responses
+remain visible, and both parties can append responses. The test selects this
+expense from another same-named expense first, guarding against stale URLs
+making a different record appear after reload.
+
+Later proposals and votes can reference the stable Dispute ID. Any authorized
+adjustment needs a separate, audited financial record and future balance-view
+design. Individual dissent must remain separate from a group decision. Reminder
+pause granularity and consent remain Slice 4 work.
+
 ## Deferred
 
 T10's full correction workflow, amendments, cancellation, confirmed payment
-reversal, disputes, voting, reminders, multi-expense balance aggregation, and
-additional split types remain outside Slice 2B.
+reversal, dispute proposals and closure, voting, reminder policies,
+multi-expense balance aggregation, and additional split types remain outside
+Slice 3A.

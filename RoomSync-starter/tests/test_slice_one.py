@@ -77,7 +77,7 @@ def test_migration_is_repeatable(settings):
     with connect(settings.database_url) as db, db.cursor() as cur:
         migrate(db)
         cur.execute("SELECT count(*) AS count FROM schema_migrations")
-        assert cur.fetchone()["count"] == 2
+        assert cur.fetchone()["count"] == 3
 
 
 def test_setup_rejects_changed_password_without_overwriting_existing_account(settings, app):

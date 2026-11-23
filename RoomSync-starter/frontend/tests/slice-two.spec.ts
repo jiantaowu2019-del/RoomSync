@@ -355,6 +355,7 @@ test("group addresses support reload, back navigation and isolated group actions
     await alex.getByRole("checkbox", { name: "Sam", exact: true }).check();
     await alex.getByRole("button", { name: "Add expense", exact: true }).click();
     await expect(alex.getByRole("heading", { name: "Only sss expense", exact: true })).toBeVisible();
+    const firstExpenseUrl = alex.url();
     await alex.getByRole("link", { name: "Back to groups" }).click();
     await expect(alex).toHaveURL(new URL("/", firstUrl).toString());
     await expect(alex.getByRole("heading", { name: "New expense", exact: true })).toHaveCount(0);
@@ -371,22 +372,23 @@ test("group addresses support reload, back navigation and isolated group actions
     await alex.getByRole("checkbox", { name: "Sam", exact: true }).check();
     await alex.getByRole("button", { name: "Add expense", exact: true }).click();
     await expect(alex.getByRole("heading", { name: "Only ss expense", exact: true })).toBeVisible();
+    const secondExpenseUrl = alex.url();
 
     await alex.getByRole("link", { name: "Back to groups" }).click();
     await alex.getByRole("link", { name: "sss", exact: true }).click();
-    await expect(alex).toHaveURL(firstUrl);
+    await expect(alex).toHaveURL(firstExpenseUrl);
     await expect(alex.getByRole("heading", { name: "sss", exact: true })).toBeVisible();
     await expect(alex.getByRole("heading", { name: "Only sss expense", exact: true })).toBeVisible();
     await expect(alex.getByText("Only ss expense", { exact: true })).toHaveCount(0);
     await alex.reload();
-    await expect(alex).toHaveURL(firstUrl);
+    await expect(alex).toHaveURL(firstExpenseUrl);
     await expect(alex.getByRole("heading", { name: "sss", exact: true })).toBeVisible();
     await expect(alex.getByRole("heading", { name: "Only sss expense", exact: true })).toBeVisible();
 
     await alex.goBack();
     await expect(alex.getByRole("heading", { name: "Shared expenses", exact: true })).toBeVisible();
     await alex.getByRole("link", { name: "ss", exact: true }).click();
-    await expect(alex).toHaveURL(secondUrl);
+    await expect(alex).toHaveURL(secondExpenseUrl);
     await expect(alex.getByRole("heading", { name: "Only ss expense", exact: true })).toBeVisible();
     await expect(alex.getByText("Only sss expense", { exact: true })).toHaveCount(0);
     await alex.getByLabel("Invite username").fill("casey");

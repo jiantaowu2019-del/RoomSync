@@ -7,6 +7,8 @@ import { useAutoRefresh } from "./useAutoRefresh";
 import { PaymentReportForm } from "./PaymentReportForm";
 import { PaymentReturn } from "./PaymentReturn";
 import { reportPayment, type PaymentDraft } from "./paymentDraft";
+import { DisputePanel, type SaveStatement } from "./DisputePanel";
+import { submitStatement, type StatementDraft } from "./statementDraft";
 import "./styles.css";
 
 const activity: Record<string, string> = {
@@ -14,6 +16,8 @@ const activity: Record<string, string> = {
   PAYMENT_REPORTED: "reported a payment",
   PAYMENT_CONFIRMED: "confirmed receipt",
   PAYMENT_REJECTED: "rejected the report",
+  DISPUTE_OPENED: "opened a dispute",
+  DISPUTE_RESPONSE_ADDED: "responded to a dispute",
 };
 
 function errorMessage(error: unknown) {
@@ -75,7 +79,7 @@ function Ledger({ session, groupId, onLogout }: {
   const [busy, setBusy] = useState(true);
   const pending = useRef(new Map<string, string>());
   const selectedId = selected?.id;
-  const requestedExpense = Number(new URLSearchParams(window.location.search).get("expense"));
+  const [requestedExpense] = useState(() => Number(new URLSearchParams(window.location.search).get("expense")));
 
   const openLedger = useCallback(async (id?: number, signal?: AbortSignal) => {
     const [detail, expenses] = await Promise.all([
@@ -86,6 +90,13 @@ function Ledger({ session, groupId, onLogout }: {
     const expense = nextId === undefined ? null : await api<Expense>("/expenses/" + nextId, { signal });
     if (signal?.aborted) return;
     if (expense && expense.group_id !== groupId) throw new ApiError(404, "Expense not found in this ledger.");
+    if (expense) {
+      const address = new URL(window.location.href);
+      if (address.searchParams.get("expense") !== String(expense.id)) {
+        address.searchParams.set("expense", String(expense.id));
+        window.history.replaceState(window.history.state, "", address);
+      }
+    }
     setGroup(detail);
     setRows(expenses);
     setSelected(expense);
@@ -201,6 +212,13 @@ function Ledger({ session, groupId, onLogout }: {
     });
   }
 
+  async function saveStatement(path: string, draft: StatementDraft) {
+    return run(async () => {
+      await submitStatement(session.viewer.id, path, draft);
+      await openLedger(selectedId);
+    });
+  }
+
   return <>
     <a className="back-link" href="/">Back to groups</a>
     <div className="page-heading">
@@ -269,7 +287,7 @@ function Ledger({ session, groupId, onLogout }: {
           {selected.shares.map(share => <ShareView key={share.id} share={share}
             actorId={session.viewer.id} expense={selected} report={submitReport}
             payer={share.debtor_id === session.viewer.id} recipient={share.recipient_id === session.viewer.id}
-            groupVisible={selected.group_id !== null} busy={busy} update={updatePayment} />)}
+            groupVisible={selected.group_id !== null} busy={busy} update={updatePayment} saveStatement={saveStatement} />)}
           <div className="activity">
             <h3>Activity</h3>
             <ol>{selected.audit.map(event => <li key={event.id}>
@@ -285,9 +303,10 @@ function Ledger({ session, groupId, onLogout }: {
 
 type Mutate = (path: string, body: object) => Promise<void>;
 
-function ShareView({ share, payer, recipient, groupVisible, busy, update, actorId, expense, report }: {
+function ShareView({ share, payer, recipient, groupVisible, busy, update, actorId, expense, report, saveStatement }: {
   share: Share; payer: boolean; recipient: boolean; groupVisible: boolean; busy: boolean; update: Mutate;
   actorId: number; expense: Expense; report: (shareId: number, draft: PaymentDraft) => Promise<boolean>;
+  saveStatement: SaveStatement;
 }) {
   const progress = share.outstanding_minor === 0 ? "SETTLED" : share.confirmed_minor > 0 ? "PARTIALLY_SETTLED" : "UNPAID";
   return <section className="share" aria-label={`${share.debtor}'s share`}>
@@ -308,6 +327,7 @@ function ShareView({ share, payer, recipient, groupVisible, busy, update, actorI
         ? <Decide payment={payment} groupVisible={groupVisible} busy={busy} update={update} />
         : <p>Waiting for {share.recipient} to confirm receipt.</p>)}
     </div>)}
+    <DisputePanel actorId={actorId} share={share} groupVisible={groupVisible} busy={busy} save={saveStatement} />
   </section>;
 }
 

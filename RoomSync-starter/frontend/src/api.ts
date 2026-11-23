@@ -21,6 +21,16 @@ export type Payment = {
   created_at: string;
   decided_at: string | null;
 };
+export type Dispute = {
+  id: number;
+  status: "OPEN";
+  claimed_minor: number;
+  outstanding_at_open_minor: number;
+  reason: string;
+  opened_by_name: string;
+  created_at: string;
+  responses: { id: number; author: string; body: string; created_at: string }[];
+};
 export type Share = {
   id: number;
   debtor_id: number;
@@ -35,6 +45,7 @@ export type Share = {
   status: "UNPAID" | "PARTIALLY_SETTLED" | "PAYMENT_REPORTED" | "SETTLED";
   payment_url: string | null;
   payments: Payment[];
+  dispute: Dispute | null;
 };
 export type Expense = ExpenseRow & {
   original_payer_id: number;

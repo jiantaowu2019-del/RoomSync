@@ -157,6 +157,40 @@ settled or reduced-balance state and requires reviewing the original expense.
 If a report's response was lost, **Retry report** recovers the original result.
 Once a report succeeds, a later intentional payment uses its own operation key.
 
+## Manual acceptance for Slice 3A
+
+After building the frontend, load your existing environment as shown above and
+run `python -m roomsync.setup` with the project's Python to apply migration 003.
+It preserves existing accounts and financial history. Restart Uvicorn after setup;
+do not start a second process on port 8000 while the old process is listening.
+
+Use separate Alex and Sam browser sessions. In a two-member group, Alex creates
+a $60 expense, Sam reports $10 and Alex confirms it. Sam opens a $5 dispute from
+his share. Read the visibility notice before submitting the reason. Alex adds
+two responses. Both sessions must show the two responses, $30 original share,
+$10 confirmed, $20 current balance and $5 claimed when opened.
+
+Confirm another $18 from Sam: the current balance becomes $2 while the claim
+remains $5 and its opening balance remains $20. Confirm the last $2: financial
+status becomes Settled while the thread stays Open. The parties may still append
+responses. Disputes never stop the existing report/confirm/reject workflow.
+An uninvolved active group member can read the thread and Activity but cannot
+respond. Historical two-person threads remain private to their original parties.
+
+### Query and test walkthrough
+
+- Start at `roomsync/http.py::get_expense`, then
+  `roomsync/ledger.py::expense_detail` and the `share_balances` view in migration
+  001. This is the unchanged financial calculation.
+- Continue at `roomsync/disputes.py::attach_threads`: one batch reads threads,
+  another reads responses; ID maps attach them without summing discussion rows.
+- Read `tests/test_slice_three_a.py::test_two_responses_do_not_multiply_receipts_and_claim_never_changes`,
+  then `test_dispute_and_receipt_observe_both_share_lock_orders`. The browser
+  walkthrough lives in `frontend/tests/slice-three-a.spec.ts`.
+- One $10 receipt joined directly to two responses appears twice; SUM then
+  incorrectly counts $20 received. Separate aggregation and batch assembly keep
+  $10 received, $20 remaining and both responses. See DESIGN for the full walk.
+
 ## Run automated tests
 
 Run the commands in a separate shell from the project directory. Use a

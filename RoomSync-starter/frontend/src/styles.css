@@ -78,6 +78,11 @@ legend { font-weight: 600; }
 .payment { border: 1px solid var(--line); padding: 12px; border-radius: 10px; overflow-wrap: anywhere; }
 .payment-entry { padding-block: 12px; border-block: 1px solid var(--line); }
 .share + .share { margin-top: 20px; }
+.dispute-panel { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }
+.statement-form { margin-block: 12px; }
+.statement-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.dispute-responses { padding-left: 20px; }
+.dispute-response { margin-block: 12px; }
 dialog { max-width: min(540px, calc(100% - 32px)); border: 1px solid var(--line); border-radius: 16px; padding: 24px; color: var(--ink); background: var(--paper); }
 dialog::backdrop { background: #17392e88; }
 dialog h2 { margin-bottom: 10px; }

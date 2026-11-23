@@ -62,6 +62,24 @@ regression when changing navigation.
 Re-run Slice 1 and Slice 2A suites, including navigation, amount allocation,
 automatic refresh and draft preservation, using isolated databases and mock links.
 
+## Slice 3A acceptance
+
+| ID | Scenario | Expected outcome |
+| --- | --- | --- |
+| A01 | Sam owes $30, receives a confirmed $10 receipt, opens a $5 dispute, and Alex adds two responses | Both responses are visible in order. Original obligation is $30, confirmed amount $10 and remaining balance $20. The claim and opening balance are $5/$20. No payment is counted twice. |
+| A02 | Alex confirms another $18 and then the remaining $2; reload both sessions | Current balance becomes $2 and then $0. The original claim, reason and responses stay visible after full reload, and the thread stays OPEN. Authorized parties can still respond after settlement. Also test a four-person food expense paid by Sam: Alex's $25 share settles through $18/$7 while Casey and Jordan each still owe $25, leaving the expense OPEN. Select it from another same-named expense before payment; its ID must remain in the URL after selection and reload. No new dispute is allowed on the settled share. No current dispute-coverage amount is returned. |
+| A03 | Check observers, outsiders, pending invitees and legacy expenses | Active group observers see text, responses and Activity but cannot open another person's thread or respond. Only debtor can open; only debtor/recipient can respond. Pending invitees and outsiders cannot read or write. Legacy threads stay private to the original two people. Authorization precedes replay, including after access is lost. |
+| A04 | Retry, duplicate and race statement writes | Same-key retry returns one statement and one audit event. Changed-body reuse and a second thread are rejected. Independent intentional responses can use identical text. Concurrent openings create one thread; concurrent same-key replies create one response. |
+| A05 | Race a $5 opening with an $18 receipt against a $20 balance | Test both deterministic Share lock orders. Opening first preserves a $20 snapshot; receipt first rejects $5 against the new $2 balance. The final ledger balance is $2 in both cases. |
+| A06 | Inject a failure after the opening or response audit insert | Statement, audit and idempotency result roll back together; the same request can retry successfully. Original text cannot be updated or deleted. |
+| A07 | Read several shares with several responses | Each thread and response attaches to its own ID in at most two extra discussion queries. Existing financial totals and payment history remain intact. |
+| A08 | Upgrade a real Slice 2B schema | Snapshot financial tables before migration 003 and compare afterward. Partial receipts and pending reports remain valid; an old private share can open a thread and process its pending report after upgrade. |
+| A09 | Update independent browser sessions and reload after a lost response | New responses arrive through existing foreground refresh without replacing drafts. Uncertain openings and replies recover their original key and result after reload. Check both group pages and /history. |
+| A10 | Validate new input without blocking payments | Reject zero, negative, fractional or excessive claims, blank/NUL/oversized text and forged extra fields. Allow a 1-cent claim, allow opening while a payment is pending, and reject a fresh opening on a settled share. Existing Slice 2B payments and return prompts remain usable. |
+
+Use mock links and isolated test schemas. Re-run Slice 1, 2A and 2B suites,
+the TypeScript build and browser navigation/refresh regressions.
+
 ## Future slice acceptance
 
 - Any approved correction or reversal preserves originals and adds linked history.

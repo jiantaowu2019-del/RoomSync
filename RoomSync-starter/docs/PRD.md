@@ -56,6 +56,14 @@ Each row is a requirement topic. 'Confirmed' means we discussed and chose the ru
 - A pending report, a settled share, or an amount above the latest balance requires reviewing the current state before reporting. Returning or retrying never duplicates a receipt. A lost response uses the original request key, while a subsequent intentional payment gets a new key.
 - Existing records and pending full-payment reports remain valid. Refunds, reversals, live payment providers, disputes and multi-expense aggregation remain separate work.
 
+### Slice 3A (approved)
+
+- A dispute belongs to one Payable Share. Only its debtor can open it, with positive integer cents no greater than the outstanding balance read under the same Share lock used by payments. There is at most one thread per share. Preserve the original amount, reason, author, timestamp and outstanding balance at opening.
+- The full thread is visible to the expense's authorized viewers: active group members for a group expense, or only the original two participants for a legacy expense. Tell the author about this visibility before submission. Only the share's debtor and recipient can append responses, and both still require expense access.
+- Threads remain OPEN in this delivery. A settled share rejects new disputes, but an existing thread remains readable and accepts authorized responses. Original statements and responses cannot be overwritten or deleted.
+- Opening or responding does not reduce the ledger balance, block payment operations, or resolve dissent. Show the current balance separately from the original claimed amount. After a $5 claim at a $20 balance and another confirmed $18 receipt, show a $2 current balance and a $5 claim at opening. Do not calculate a current disputed coverage amount in 3A.
+- Proposals, voting, adjustments, closure and reminder policies remain future work. The reminder pause granularity in R09/R11 must be settled before Slice 4, not inferred in 3A.
+
 These are incremental releases of an integrated product, not permission to defer foundational protections needed in Slice 1.
 
 ## 5. Explicitly excluded from initial release

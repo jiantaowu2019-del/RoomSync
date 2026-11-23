@@ -23,8 +23,10 @@ test("two members settle an expense after rejecting an incorrect report", async 
       headers: { Origin: origin, "Idempotency-Key": "legacy-browser-fixture" },
     });
     expect(created.status()).toBe(201);
+    const expenseId = (await created.json()).id;
     await alex.getByRole("link", { name: "Historical expenses", exact: true }).click();
-    await expect(alex).toHaveURL(/\/history$/);
+    await alex.locator(".expense-item").filter({ hasText: "Groceries" }).click();
+    await expect(alex).toHaveURL(`${origin}/history?expense=${expenseId}`);
     await expect(alex.getByRole("heading", { name: "Groceries" })).toBeVisible();
     await expect(alex.getByRole("link", { name: "Go to payment" })).toHaveCount(0);
     await sam.getByRole("link", { name: "Historical expenses", exact: true }).click();

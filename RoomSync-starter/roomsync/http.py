@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from psycopg2.extras import Json
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from . import groups, ledger
+from . import disputes, groups, ledger
 from .auth import COOKIE, SESSION_LIFETIME, authenticate, session_token_hash, viewer
 from .config import Settings
 from .db import connect
@@ -23,6 +23,9 @@ NonBlankDescription = Annotated[str, StringConstraints(
 )]
 NonBlankReason = Annotated[str, StringConstraints(
     strip_whitespace=True, min_length=1, max_length=500, pattern=r"^[^\x00]+$",
+)]
+Statement = Annotated[str, StringConstraints(
+    strip_whitespace=True, min_length=1, max_length=2000, pattern=r"^[^\x00]+$",
 )]
 DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
@@ -61,6 +64,15 @@ class Amount(Payload):
 
 class Rejection(Payload):
     reason: NonBlankReason
+
+
+class NewDispute(Payload):
+    amount_minor: Money
+    reason: Statement
+
+
+class DisputeResponse(Payload):
+    body: Statement
 
 
 def idempotent(cur, actor_id, request_key, route, payload, operation):
@@ -200,7 +212,25 @@ def create_app(settings: Settings | None = None):
         with connect(settings.database_url) as db, db.cursor() as cur:
             cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             actor = viewer(cur, request)["id"]
-            return ledger.expense_detail(cur, expense_id, actor, settings.links)
+            expense = ledger.expense_detail(cur, expense_id, actor, settings.links)
+            disputes.attach_threads(cur, expense["shares"])
+            return expense
+
+    @app.post("/api/shares/{share_id}/disputes", status_code=201)
+    def open_dispute(share_id: ResourceId, payload: NewDispute, request: Request, key: RequestKey):
+        with connect(settings.database_url) as db, db.cursor() as cur:
+            actor = viewer(cur, request)["id"]
+            share = disputes.authorize_creation(cur, share_id, actor)
+            return idempotent(cur, actor, key, f"open-dispute:{share_id}", payload,
+                              lambda: disputes.create_dispute(cur, share, actor, payload.amount_minor, payload.reason))
+
+    @app.post("/api/disputes/{dispute_id}/responses", status_code=201)
+    def respond_to_dispute(dispute_id: ResourceId, payload: DisputeResponse, request: Request, key: RequestKey):
+        with connect(settings.database_url) as db, db.cursor() as cur:
+            actor = viewer(cur, request)["id"]
+            dispute = disputes.authorize_response(cur, dispute_id, actor)
+            return idempotent(cur, actor, key, f"dispute-response:{dispute_id}", payload,
+                              lambda: disputes.add_response(cur, dispute, actor, payload.body))
 
     @app.post("/api/shares/{share_id}/payments", status_code=201)
     def report(share_id: ResourceId, payload: Amount, request: Request, key: RequestKey):
